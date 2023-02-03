@@ -1,0 +1,231 @@
+---
+title: "This script is to assess how DE detection changes with number of cells / sample composition."
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+```{r load, message = FALSE}
+
+
+library(SingleCellExperiment)
+library(batchelor)
+library(stats)
+library(Matrix)
+library(splatter)
+library(BiocParallel)
+library(BiocNeighbors)
+library(BiocSingular)
+library(pROC)
+library(ggplot2)
+library(ggpubr)
+library(scran)
+library(wesanderson)
+library(stringr)
+library(MetBrewer)
+
+set.seed(32)
+
+#root.dir = "/Users/alsu/Develop/hubmap_metaRef/"
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+figures.dir = paste0(root.dir , "figures/DE_detection_n_cells/")
+#source(paste0(root.dir , "am_hubmapMetaRef/functions/milo_functions.R"))
+#source(paste0(root.dir , "am_hubmapMetaRef/functions/core_functions.R"))     
+
+
+vars = c("sensitivity" , "specificity" , "fdr" , "fomr")
+
+
+```
+
+
+# Add stat on samples composition (n-total and ratio)
+
+```{r sub-ds-analysis, message = FALSE}
+
+
+add_sample_stat_to_de = function(de_stat){
+  cols_group1 = paste0( paste0("Batch" , c(1:10)) , "_Group1")
+  cols_group2 = paste0( paste0("Batch" , c(1:10)) , "_Group2")
+  de_stat$n_samples_total_actual = sapply(1:nrow(de_stat) , function(i){
+    return(sum(de_stat[i,c(cols_group1 , cols_group2)] != 0))
+  })
+  de_stat$n_samples_ratio_actual = sapply(1:nrow(de_stat) , function(i){
+    out = sum(de_stat[i,cols_group1] != 0)/sum(de_stat[i,cols_group2] != 0)
+    return( round(max(out , 1/out),2) )
+  })
+  de_stat$n_samples_total = de_stat$n_samples_ref + de_stat$n_samples_query
+  de_stat$n_samples_ratio = sapply(1:nrow(de_stat) , function(i){
+    out = de_stat$n_samples_ref[i]/de_stat$n_samples_query[i]
+    return( round(max(out , 1/out),2) )
+  })
+  return(de_stat)
+}
+
+
+de_stat_downsampling = readRDS(paste0(root.dir , "data/processed/DE_detection_n_cells/de_stat_downsampling.Rds"))
+de_stat_downsampling = add_sample_stat_to_de(de_stat_downsampling)
+# add ds ID
+de_stat_downsampling$dataset = paste0(de_stat_downsampling$lfc , "_" , de_stat_downsampling$n_samples_ref , "_" , de_stat_downsampling$n_samples_query)
+
+
+
+```
+
+# Add runmed for each dataset (logFC + n-samples-ref + n-samples-query)
+
+```{r run-med, message = FALSE}
+
+
+## add runmed
+add_runmed = function(var){
+  require(stats)
+  de_stat_downsampling = de_stat_downsampling[order(de_stat_downsampling$n_cells_downsampled) , ]
+  de_stat_downsampling[, paste0(var , "_runmed")] = NaN
+  for (id in unique(de_stat_downsampling$dataset) ){
+    idx = which(de_stat_downsampling$dataset == id )
+    current.runmed = runmed(de_stat_downsampling[idx, var] , k = 51 , endrule = "constant")
+    de_stat_downsampling[idx,paste0(var , "_runmed")] = current.runmed
+  }
+  return(de_stat_downsampling)
+}
+
+for (var in vars){
+  de_stat_downsampling = add_runmed(paste0(var , "_all"))
+  de_stat_downsampling = add_runmed(paste0(var , "_relative"))
+}
+
+
+# check how it looks (not for pub)
+p1 = ggplot() +
+  geom_point(data = de_stat_downsampling , aes(x = n_cells_downsampled , y = sensitivity_all)) +
+  geom_line(data = de_stat_downsampling , aes(x = n_cells_downsampled , y = sensitivity_all_runmed , color = "red")) + 
+  facet_wrap(~dataset) + 
+  theme_bw() + 
+  theme(legend.position = "none")
+p1
+
+
+p2 = ggplot() +
+  geom_point(data = de_stat_downsampling , aes(x = n_cells_downsampled , y = specificity_all)) +
+  geom_line(data = de_stat_downsampling , aes(x = n_cells_downsampled , y = specificity_all_runmed , color = "red")) + 
+  facet_wrap(~dataset) + 
+  theme_bw() + 
+  theme(legend.position = "none")
+p2
+
+
+```
+
+## Assess how sensitivity changes as a function of n-cells-downsampled
+
+```{r plot-detection, message = FALSE}
+
+
+var_labels = c("Sensitivity" , "Specificity" , "FDR" , "False omission rate")
+names(var_labels) = vars  
+
+  
+get_plot_one_var_col_ratio = function(var , lfc){
+  cols = met.brewer("Nizami" ,9 )[c(2,4,6,9)]
+  current.stat = de_stat_downsampling[de_stat_downsampling$lfc == lfc , ]
+  p = ggplot(current.stat, aes(x = n_cells_downsampled , y = current.stat[, var] , col = factor(n_samples_ratio) , group = factor(dataset))) + 
+    geom_line(size=1) + 
+    labs(y = str_remove( var , "_runmed")  , x = "n_cells_downsampled") + 
+    theme_bw() + 
+    scale_color_manual(values = cols , name = "" , labels = c("1: 2-2,6-6,10-10" , "1.67: 10-6,6-10" , 
+                                            "3: 2-6,6-2" , "5: 2-10,10-2")) + 
+    labs(x = "#cells" ) +
+    theme(axis.text=element_text(size=14)) +
+    theme(legend.text=element_text(size=13) , legend.title = element_text(size=13) ) + 
+    theme(text=element_text(size=15) , axis.text.x = element_text(size=13) , axis.text.y = element_text(size=13))
+  return(p)
+}
+
+
+
+
+get_plot_one_var_col_n_samples = function(var , lfc){
+  cols = met.brewer("Signac" , 12 )[c(1,3,6,10,12)]
+  current.stat = de_stat_downsampling[de_stat_downsampling$lfc == lfc , ]
+  p = ggplot(current.stat, aes(x = n_cells_downsampled , y = current.stat[, var] , col = factor(n_samples_total), group = factor(dataset))) + 
+    geom_line(size=1) + 
+    labs(y = str_remove( var , "_runmed") , x = "n_cells_downsampled") + 
+    theme_bw() + 
+    scale_color_manual(values = cols , name = "" , labels = c("4: 2-2" , "8: 2-6,6-2" , 
+                                            "12: 2-10,10-2,6-6" , "16: 6-10,10-6" , "20: 10-10")) + 
+    labs(x = "#cells" ) +
+    theme(axis.text=element_text(size=14)) +
+    theme(legend.text=element_text(size=13) , legend.title = element_text(size=13) ) + 
+    theme(text=element_text(size=15) , axis.text.x = element_text(size=13) , axis.text.y = element_text(size=13))
+  return(p)
+}
+
+
+
+
+anno = expand.grid(comparison = c("relative" , "all") , lfc = c(0.5 , 1, 2 , 3))
+plots = lapply(1:nrow(anno) , function(i){
+  comparison = anno$comparison[i]
+  lfc = anno$lfc[i]
+  plots_per_comparison = lapply(vars , function(var){
+    label = var_labels[names(var_labels) == var]
+    p = get_plot_one_var_col_ratio(paste0(var , "_" , comparison , "_runmed") , lfc = lfc) + 
+      labs( y = label)
+    return(p)
+  })
+  p = ggarrange(plotlist = plots_per_comparison , common.legend = T , legend = "right")
+  print(p)
+  ggsave(filename = paste0(figures.dir , "stat_downsampling/" , comparison , "_" , lfc, "_by_ratio.png"), plot = p, width = 9, height = 6)
+  
+  
+  plots_per_comparison = lapply(vars , function(var){
+    label = var_labels[names(var_labels) == var]
+    p = get_plot_one_var_col_n_samples(paste0(var , "_" , comparison , "_runmed") , lfc = lfc) + 
+      labs( y = label) 
+    return(p)
+  })
+  p = ggarrange(plotlist = plots_per_comparison , common.legend = T , legend = "right")
+  print(p)
+  ggsave(filename = paste0(figures.dir , "stat_downsampling/" , comparison , "_" , lfc, "_by_n_samples.png"), plot = p, width = 9, height = 6)
+  
+})
+
+
+
+
+```
+
+# Different logFC - just sensitivity
+
+```{r get-sens-low-n-cells, message = FALSE}
+
+
+cols = met.brewer("Hokusai2" , n = 8)[c(2,4,6,8)]
+p = ggplot(de_stat_downsampling[de_stat_downsampling$n_cells_downsampled <= 1500 , ], aes(x = n_cells_downsampled , y = sensitivity_all_runmed , col = factor(lfc) , group = factor(dataset))) + 
+  geom_line(size=1) + 
+  theme_bw() + 
+  facet_wrap(~n_samples_ref + n_samples_query , ncol=3) +
+  labs(x = "#cells" , y = "Sensitivity") +
+  theme(axis.text=element_text(size=13)) +
+  theme(legend.text=element_text(size=13) , legend.title = element_text(size=13) ) + 
+  theme(text=element_text(size=13) , axis.text.x = element_text(size=13) , axis.text.y = element_text(size=13)) + 
+  scale_color_manual(values = cols , name = "logFC") + 
+  scale_x_continuous(limits = c(0, 1500), breaks = c(0 , 500 , 1000))
+p
+ggsave(filename = paste0(figures.dir , "stat_downsampling/" , "diff_lfc.png"), plot = p, width = 7.5, height = 6)
+
+
+
+
+```
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

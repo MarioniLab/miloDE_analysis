@@ -1,0 +1,78 @@
+---
+title: "Assign neighbourhoods for macrophages, lung (healthy + IPF)"
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+```{r load, message = FALSE}
+
+
+library(miloDE)
+library(BiocParallel)
+
+ncores = 1
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+
+set.seed(32)
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+
+# load data
+sce = readRDS(paste0(root.dir , "data/lung/sce_mapped.Rds"))
+# delete dataset for which there is no control data
+sce = sce[, !sce$dataset_origin == "delorey_2021"]
+
+# select data corresponding to IPF+normal; macrophages
+disease = "idiopathic pulmonary fibrosis"
+celltype = "Macrophage"
+sce = sce[, sce$disease %in% c(disease , "normal") & sce$predicted.annotation.l1 == "Macrophage"]
+
+# delete datasets for which we only have normal data now
+tab = table(sce$disease , sce$dataset_origin)
+tab
+
+datasets_2_discard = c( "deprez_2020" , "lukassen_2020" , "madissoon_2020", "mayr_2020")
+sce = sce[, !sce$dataset_origin %in% datasets_2_discard]
+
+
+
+```
+
+# Assign neighbourhoods
+
+```{r get-sce-milo, message = FALSE}
+
+
+
+sce_milo = miloDE::assign_neighbourhoods(sce , reducedDim_name = "pca.azimuth" , k = 30, prop = 0.2 , order = 2, filtering = TRUE)
+saveRDS(sce_milo , file = paste0(root.dir , "data/processed/lung_macrophages/sce_milo", ".Rds"))
+
+
+
+```
+
+# Recalculate umaps on only Macs 
+
+```{r add-umaps, message = FALSE}
+
+
+set.seed(32)
+umaps_mac = as.data.frame(uwot::umap(reducedDim(sce_milo, "pca.azimuth") , min_dist = 1))
+colnames(umaps_mac) = c("x" , "y")
+reducedDim(sce_milo , "UMAP_mac") = umaps_mac
+saveRDS(sce_milo , paste0(root.dir , "data/processed/lung_macrophages/sce_milo" ,".Rds"))
+
+
+
+```
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

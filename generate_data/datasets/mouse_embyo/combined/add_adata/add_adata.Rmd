@@ -1,0 +1,53 @@
+---
+title: "Move chimera sce to adata"
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+```{r load, message = FALSE}
+
+
+library(SingleCellExperiment)
+library(zellkonverter)
+
+set.seed(32)
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+#root.dir = "/Users/alsu/Develop/hubmap_metaRef/"
+source(paste0(root.dir , "am_hubmapMetaRef/functions/milo_functions.R"))
+source(paste0(root.dir , "am_hubmapMetaRef/functions/core_functions.R"))     
+
+
+```
+
+# Add adata
+
+```{r add-adata, message = FALSE}
+
+
+sce = readRDS(file = paste0(root.dir , "data/sces/mouse_embryo/chimera/mouse_embryo_chimera_tal.Rds"))
+  
+sce_cleaned = SingleCellExperiment(list(counts = counts(sce) , logcounts = logcounts(sce)))
+# add metadata
+sce_cleaned$cell = sce$cell
+sce_cleaned$celltype = sce$celltype
+sce_cleaned$sample = sce$sample
+sce_cleaned$type = sce$type
+
+writeH5AD(sce_cleaned , paste0(root.dir , "data/sces/mouse_embryo/chimera/mouse_embryo_chimera_tal.h5ad") , compression = "gzip")
+
+
+```
+
+
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

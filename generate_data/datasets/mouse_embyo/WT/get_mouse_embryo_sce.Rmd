@@ -1,0 +1,46 @@
+---
+title: "This pipeline to extract mouse embryo atlas (E8.5)"
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+```{r load, message = FALSE}
+
+
+library(SingleCellExperiment)
+library(MouseGastrulationData)
+
+set.seed(32)
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+
+```
+
+# Load data (E8.5)
+
+```{r load-data, message = FALSE}
+
+samples_e8.5 = AtlasSampleMetadata$sample[AtlasSampleMetadata$stage == "E8.5"]
+
+sce <- lapply(samples_e8.5 , function(sample){
+  out = EmbryoAtlasData(samples = sample)
+  return(out)
+})
+sce = do.call(cbind , sce)
+# delete stripped and doublets
+sce = sce[, !sce$stripped & !sce$doublet]
+saveRDS(sce , paste0(root.dir , "data/sces/mouse_embryo/WT/mouse_embryo_E8.5.Rds"))
+
+
+```
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

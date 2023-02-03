@@ -1,0 +1,86 @@
+---
+title: "This pipeline to get Tal1 chimera data only"
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+```{r load, message = FALSE}
+
+
+library(SingleCellExperiment)
+library(MouseGastrulationData)
+library(scran)
+library(uwot)
+library(BiocParallel)
+library(zellkonverter)
+ncores = 5
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+
+set.seed(32)
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+source(paste0(root.dir , "miloDE_analysis/core_functions.R"))
+
+```
+
+
+# Load chimera (Tal) data
+
+```{r load-tal-data, message = FALSE}
+
+
+sce_chimera = Tal1ChimeraData()
+
+# delete doublets and stripped
+sce_chimera = sce_chimera[, !sce_chimera$celltype.mapped %in% c("Doublet" , "Stripped")]
+
+# delete row for tomato
+sce_chimera = sce_chimera[!rownames(sce_chimera) == "tomato-td" , ]
+
+
+```
+
+# Concatenate and add logcounts
+
+```{r add-logcounts, message = FALSE}
+
+
+# add logcounts
+sce_chimera = add_logcounts_simple(sce_chimera)
+
+
+```
+
+# Add reduced dims 
+
+## MNN-corrected PCs
+
+```{r mnn-pcs-hvgs-ref, message = FALSE}
+
+
+hvgs <- getTopHVGs(sce_chimera[, sce_chimera$tomato == F], n=3000)
+sce_chimera = add_batch_corrected_pca(sce_chimera , hvgs , reduced.dim_name = "pca.corrected" , bpparam = mcparam)
+
+# add umaps
+umaps = as.data.frame(umap(reducedDim(sce_chimera , "pca.corrected") , min_dist = 0.7))
+rownames(umaps) = colnames(sce_chimera)
+colnames(umaps) = c("umap_1" , "umap_2")
+reducedDim(sce_chimera , "UMAP") = umaps
+
+saveRDS(sce_chimera , file = paste0(root.dir , "data/sces/mouse_embryo/chimera/mouse_embryo_chimera_tal_only.Rds"))
+
+
+```
+
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

@@ -1,0 +1,197 @@
+---
+title: "This pipeline to select genes and simulate perturbed counts for the order analysis."
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+```{r load, message = FALSE}
+
+
+library(SingleCellExperiment)
+library(miloR)
+library(BiocParallel)
+library(ggplot2)
+library(ggpubr)
+library(geneBasisR)
+library(splatter)
+library(scran)
+library(MetBrewer)
+library(viridis)
+
+ncores = 5
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+set.seed(32)
+
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+
+# load sce with embedding
+sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/chimera/mouse_embryo_chimera_tal.Rds"))
+# subselect only for Tal1+
+sce = sce[, sce$tal1 == 1]
+
+
+# get rowdata
+rowdata = as.data.frame(rowData(sce))
+rowdata$n_cells_expressed = as.numeric( apply(counts(sce) , 1 , function(x) sum(x > 0)) )
+rowdata$avg_expr = round( rowMeans(logcounts(sce)) , 1 )
+rowdata$avg_expr_ct = round( rowMeans(logcounts(sce[, sce$sub_celltype == sub_ct])) , 1 )
+
+rowdata$avg_expr_pgc = round( rowMeans(logcounts(sce[, sce$sub_celltype == "PGC"])) , 1 )
+rowdata$avg_expr_de = round( rowMeans(logcounts(sce[, sce$sub_celltype == "Def. endoderm"])) , 1 )
+rowdata$avg_expr_fp = round( rowMeans(logcounts(sce[, sce$sub_celltype == "Floor plate"])) , 1 )
+
+
+
+
+```
+
+
+# Get genes that are not de
+
+```{r get-no-de-genes, message = FALSE}
+
+
+
+get_no_de_genes = function(sub_celltype , pval.thresh = 0.1 ){
+  print(sub_celltype)
+  require(tibble)
+  current.sce = sce[, sce$sub_celltype == sub_celltype]
+  summed = summarizeAssayByGroup(counts(current.sce), colData(current.sce)[,c("sample","type")])
+  y <- DGEList(assay(summed, "sum"), samples=colData(summed), lib.size = colSums(assay(summed , "sum")))
+  y <- calcNormFactors(y)
+  design <- model.matrix(~ factor(type), y$samples)
+  y <- estimateDisp(y, design)
+  fit <- glmQLFit(y, design, robust=TRUE)
+  res <- glmQLFTest(fit, coef=ncol(design))
+  out = topTags(res, n = Inf )
+  out = as.data.frame(out)
+  out = rownames_to_column(out , var = "ENSEMBL")
+  #out = merge(out , rowdata)
+  out = out[out$PValue >= pval.thresh  , ]
+  #out = out[out$avg_expr < 1 & out$n_cells_expressed < 10000, ]
+  out$sub_celltype = sub_celltype
+  return(out)
+}
+
+
+sub_cts = table(sce$sub_celltype)
+sub_cts = names(sub_cts)[sub_cts > 50]
+no_de_genes = bplapply(sub_cts , function(sub_ct){
+  out = get_no_de_genes(sub_ct) 
+  return(out)
+} , BPPARAM = mcparam)
+no_de_genes = do.call(rbind , no_de_genes)
+no_de_genes = as.data.frame(no_de_genes %>% group_by(ENSEMBL) %>% dplyr::summarise(n_cts = n()))
+no_de_genes = no_de_genes[no_de_genes$n_cts == length(sub_cts) , ]
+no_de_genes = merge(no_de_genes , rowdata , all.x = T , all.y = F)
+
+
+
+table(no_de_genes$avg_expr_pgc)
+table(no_de_genes$avg_expr_de)
+table(no_de_genes$avg_expr_fp)
+
+
+
+
+```
+
+# Get candidate genes of different average expression ranges
+
+```{r get-candidate-genes, message = FALSE}
+
+
+
+get_candidate_genes = function(genes , avg_expr.grid, sub_ct , n_genes = 5){
+  candidate_genes = lapply(avg_expr.grid , function(avg_expr){
+    current.rowdata = rowdata[rowdata$ENSEMBL %in% genes , ]
+    
+    if (sub_ct == "PGC"){
+      var = "avg_expr_pgc"
+    } else if (sub_ct == "Def. endoderm"){
+      var = "avg_expr_de"
+    } else if (sub_ct == "Floor plate"){
+      var = "avg_expr_fp"
+    }
+    
+    current.genes = sample(current.rowdata$ENSEMBL[current.rowdata[, var] == avg_expr] , min(n_genes, length(current.rowdata$ENSEMBL[current.rowdata[, var] == avg_expr])))
+    current.genes = current.rowdata[current.rowdata$ENSEMBL %in% current.genes , c("ENSEMBL" , "avg_expr_pgc" , "avg_expr_de" , "avg_expr_fp")]
+    return(current.genes)
+  })
+  candidate_genes = do.call(rbind , candidate_genes)
+  candidate_genes$sub_celltype = sub_ct
+  return(candidate_genes)
+}
+ 
+sub_cts = c("PGC" , "Def. endoderm" , "Floor plate") 
+avg_expr.grid = c(0 , 0.1 , 0.2 , 0.3 , 0.4 , 0.5)
+
+
+genes_2_simulate = lapply(sub_cts, function(sub_ct){
+  out = get_candidate_genes(no_de_genes$ENSEMBL , avg_expr.grid = avg_expr.grid , sub_ct , n_genes = 20)
+  return(out)
+})
+genes_2_simulate = do.call(rbind, genes_2_simulate)
+# exclude shared genes
+tab = table(genes_2_simulate$ENSEMBL)
+tab = tab[tab == 1]
+genes_2_simulate = genes_2_simulate[genes_2_simulate$ENSEMBL %in% names(tab) , ]
+
+
+genes_2_simulate$range = sample(c(1,2), nrow(genes_2_simulate) , replace = T)
+genes_2_simulate$frac_2_change = sample(c(1), nrow(genes_2_simulate) , replace = T)
+genes_2_simulate = merge(genes_2_simulate , rowdata[, c("ENSEMBL" , "SYMBOL")] , all.x = T , all.y = F)
+saveRDS(genes_2_simulate , file = paste0(root.dir , "data/processed/order_analysis/simulated_genes.Rds"))
+
+
+```
+
+
+# Add simulated counts
+
+```{r add-sim-counts, message = FALSE}
+
+
+add_simulated_counts <- function(sce, sub_celltype = sub_ct, gene, frac_cells_change, range){
+  counts = counts(sce)
+  current.counts = counts[gene, ]
+  idx_2_change = which(sce$type == "wt" & sce$sub_celltype == sub_celltype)
+  idx_2_change = sample(idx_2_change , round(length(idx_2_change)*frac_cells_change))
+  current.counts[idx_2_change] = current.counts[idx_2_change] + floor(runif(length(idx_2_change), min=range[1], max=(range[2]+1)))
+    
+  counts[gene, ] = current.counts
+  counts(sce) = counts
+  return(sce)
+}
+
+sce_simulated = sce
+for (i in 1:nrow(genes_2_simulate)){
+  print(i)
+  sce_simulated = add_simulated_counts(sce_simulated, sub_celltype = genes_2_simulate$sub_celltype[i], 
+                             gene = genes_2_simulate$ENSEMBL[i], 
+                             range = c(0 , genes_2_simulate$range[i]) , 
+                             frac_cells_change = genes_2_simulate$frac_2_change[i])
+  
+}
+reducedDim(sce_simulated , "UMAP_scVI") = as.data.frame(uwot::umap(reducedDim(sce_simulated , "scVI") , min_dist = 1))
+# update logcounts
+sce_simulated = add_logcounts_simple(sce_simulated)
+saveRDS(sce_simulated , file = paste0(root.dir , "data/processed/order_analysis/sce_chimera_w_simulations.Rds"))
+
+
+```
+
+
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

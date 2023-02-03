@@ -1,0 +1,763 @@
+---
+title: "analysis for IPF, macrophages"
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+```{r load, message = FALSE}
+
+
+library(miloDE)
+library(miloR)
+library(SingleCellExperiment)
+library(ggplot2)
+library(ggpubr)
+library(viridis)
+library(wesanderson)
+library(MetBrewer)
+library(dplyr)
+library(tibble)
+library(BiocParallel)
+library(scales)
+
+ncores = 5
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+
+
+set.seed(32)
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+#root.dir = "~/Develop/hubmap_metaRef/"
+
+figures.dir = paste0(root.dir , "figures/lung/ipf/macrophage/")
+
+# load sce-milo and milo-de/da
+sce_milo = readRDS(paste0(root.dir , "data/processed/lung_macrophages/sce_milo" ,".Rds"))
+
+milo_de = readRDS(paste0(root.dir , "data/processed/lung_macrophages/milo_de_stat" ,".Rds"))
+
+milo_da = readRDS(paste0(root.dir , "data/processed/lung_macrophages/milo_da_stat" ,".Rds"))
+
+
+# update milo-de stats - discard genes that not DE nowhere and nhoods w no DE
+filter_loose_milo_de = function(milo_de , pval.thresh = 0.05){
+  stat = as.data.frame(milo_de %>% group_by(gene) %>% dplyr::summarise(n_genes_sig = sum(pval_corrected_across_nhoods < 0.1 , na.rm = T)))
+  genes = stat$gene[stat$n_genes_sig > 0]
+  milo_de = milo_de[milo_de$gene %in% genes , ]
+  # select only data where test was perfromed
+  milo_de = milo_de[milo_de$test_performed , ]
+  
+  # add logFC-corrected
+  ## update data for missing values
+  milo_de$pval[is.na(milo_de$pval)] = 1
+  milo_de$pval_corrected_across_nhoods[is.na(milo_de$pval_corrected_across_nhoods)] = 1
+  milo_de$pval_corrected_across_genes[is.na(milo_de$pval_corrected_across_genes)] = 1
+  milo_de$logFC[is.na(milo_de$logFC)] = 0
+  ## add logFC
+  milo_de$logFC_corrected = milo_de$logFC
+  milo_de$logFC_corrected[milo_de$pval_corrected_across_nhoods > pval.thresh] = 0 
+
+  return(milo_de)
+}
+
+milo_de = filter_loose_milo_de(milo_de)
+
+
+```
+
+
+# DS composition
+
+```{r ds-composition, message = FALSE}
+
+
+meta = as.data.frame(colData(sce_milo))
+meta = unique(meta[, c("dataset_origin" , "donor" , "disease")])
+tab = as.data.frame(table(meta$dataset_origin , meta$disease))
+colnames(tab) = c("dataset" , "disease" , "n_donors")
+tab$disease = sapply(tab$disease , function(x) ifelse(x == "normal" , "Normal" , "IPF"))
+tab$disease = factor(tab$disease , levels = c("Normal" , "IPF"))
+tab$dataset = factor(tab$dataset , levels = c("reyfman_2019" , "morse_2019", "habermann_2020" , "adams_2020"))
+
+cols_disease = wesanderson::wes_palette("Royal1" , n = 2)
+p = ggplot(tab , aes(x = dataset , y = n_donors , fill = disease)) +
+  geom_bar(stat = "identity" , position = "dodge") +
+  theme_bw() +
+  scale_fill_manual(values = cols_disease , name = "Disease\nstatus") +
+  labs(y = "# donors" , x = "Dataset") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  theme(legend.position = "top") +
+  scale_x_discrete(labels=c("Reyfman,\n2019" , "Morse,\n2019" , "Habermann,\n2020" , "Adams,\n2020")) +
+  theme(axis.text=element_text(size=15)) +
+  theme(legend.text=element_text(size=15) , legend.title = element_text(size=15) ) +
+  theme(text=element_text(size=15) , axis.text.x = element_text(size=13) , axis.text.y = element_text(size=13))
+p
+ggsave(filename = paste0(figures.dir, "donor_composition" ,".png"), plot = p, width = 3.5, height = 4)
+
+
+```
+
+
+# Nhood plots - DA/Spp1
+
+Add average SPP1 expression
+
+```{r nhood-stat, message = FALSE}
+
+
+# add spp1 avg expression 
+nhoods_sce = nhoods(sce_milo)
+logcounts_spp1 = as.numeric( logcounts(sce_milo["SPP1" , ]) )
+names(logcounts_spp1) = colnames(sce_milo)
+
+milo_da$avg_spp1 = sapply(1:nrow(milo_da) , function(i){
+  hood_id = milo_da$Nhood[i]
+  idx = which(nhoods_sce[, hood_id] == 1)
+  cells = rownames(nhoods_sce)[idx]
+  out = mean(logcounts_spp1[which(names(logcounts_spp1) %in% cells)])
+  return(out)
+})
+milo_da$avg_spp1_round = round(milo_da$avg_spp1 , 1)
+
+# add logFC-DA quantiles - for dotplots
+milo_da$logFC_quantiled = NaN
+vec = as.numeric( quantile(milo_da$logFC_DA , seq(0.02 , 1 , 0.02)) )
+for (i in 1:nrow(milo_da)){
+  idx = which(milo_da$logFC_DA[i] <= vec)
+  idx = idx[1]
+  milo_da$logFC_quantiled[i] = vec[idx]
+}
+milo_da$logFC_quantiled = round(milo_da$logFC_quantiled , 2)
+
+milo_da = milo_da[order(milo_da$Nhood) , ]
+
+# nhood stat, DA
+p1 = miloDE::plot_milo_by_single_metric(sce_milo , milo_da , colour_by = "logFC_DA" , significance_by = "SpatialFDR_DA" , 
+                                        layout = "UMAP_mac" , edge_weight.thresh = 100 , size_range=c(0.5,5)) +
+  guides(width=FALSE ,edge_width=FALSE,size=F) +
+  scale_fill_gradient2(low = "palegreen4" , high = "mediumorchid4" , midpoint = 0, mid = "white" , name = "logFC,\nDA") +
+  theme(legend.text=element_text(size=15) , legend.title = element_text(size=20))
+p1
+ggsave(filename = paste0(figures.dir, "spatial_da" ,".png"), plot = p1, width = 4, height = 3)
+
+# nhood stat, spp1
+p2 = miloDE::plot_milo_by_single_metric(sce_milo , milo_da , colour_by = "avg_spp1" , significance_by = NULL , order_by = "avg_spp1" , order_direction = F , 
+                                        layout = "UMAP_mac" , edge_weight.thresh = 100 , size_range=c(0.5,5)) +
+  guides(width=FALSE ,edge_width=FALSE,size=F) +
+  scale_fill_viridis(discrete = F , name = "avg\nSPP1") +
+  theme(legend.text=element_text(size=15) , legend.title = element_text(size=20))
+p2
+ggsave(filename = paste0(figures.dir, "spatial_spp1" ,".png"), plot = p2, width = 4, height = 3)
+
+
+# corr
+cor = round( cor(milo_da$avg_spp1 , milo_da$logFC) , 2)
+p3 = ggplot(milo_da , aes(x = logFC_DA , y = avg_spp1 )) +
+  geom_point(size=.75 , alpha = .5) +
+  theme_bw() +
+  ggtitle(paste0("Corr = " , cor)) +
+  labs(x = "logFC, DA" , y = "avg SPP1") +
+  theme(axis.text=element_text(size=15)) +
+  theme(legend.text=element_text(size=15) , legend.title = element_text(size=15) ) +
+  theme(text=element_text(size=15) , axis.text.x = element_text(size=13) , axis.text.y = element_text(size=13))
+p3
+ggsave(filename = paste0(figures.dir, "corr_da_and_spp1" ,".png"), plot = p3, width = 2, height = 2)
+
+
+p = ggarrange(p1,p2,p3 , nrow = 3)
+p
+ggsave(filename = paste0(figures.dir, "spatial_da_and_spp1" ,".png"), plot = p, width = 3, height = 7) 
+
+
+
+```
+
+# milo-DE
+
+## Get stat per gene
+
+```{r get-stat-per-gene, message = FALSE}
+
+
+
+get_stat_per_gene = function(milo_de , pval.thresh = 0.05){
+  milo_de_per_gene = as.data.frame(milo_de %>% group_by(gene) 
+                                 %>% dplyr::summarise(frac_hoods_sig = mean(pval_corrected_across_nhoods <= pval.thresh, na.rm = T) ,
+                                                      n_hoods_sig = sum(pval_corrected_across_nhoods <= pval.thresh, na.rm = T),
+                                                      logFC = mean(logFC , na.rm = T) ,
+                                                      logFC_corrected = mean(logFC_corrected , na.rm = T)))
+  milo_de_per_gene_sig = as.data.frame(milo_de[milo_de$pval_corrected_across_nhoods <= pval.thresh , ] %>% group_by(gene) %>% dplyr::summarise(logFC_sig = mean(logFC) , frac_pos = mean(logFC > 0) , frac_neg = mean(logFC < 0)))
+  
+ milo_de_per_gene = merge(milo_de_per_gene , milo_de_per_gene_sig , all.x = T)
+ return(milo_de_per_gene)
+}
+
+
+
+
+```
+
+
+# Louvain clustering
+
+```{r louvain-cluster, message = FALSE}
+
+
+get_louvain_clustering = function(milo_de , 
+                                  pval.thresh = 0.05, 
+                                  correction = "pval_corrected_across_nhoods",
+                                  frac_hoods_sig.thresh = 0.1, 
+                                  logFC.thresh = -1 , 
+                                  frac_neg.thresh = 0.75 , 
+                                  nps = 5, 
+                                  resolution = 1){
+  require(reshape2)
+  require(irlba)
+  require(tibble)
+  require(igraph)
+  require(scran)
+  
+  set.seed(32)
+  # select interesting genes
+  milo_de_per_gene = get_stat_per_gene(milo_de , pval.thresh = pval.thresh)
+  
+  genes = milo_de_per_gene$gene[milo_de_per_gene$n_hoods_sig >= round(ncol(nhoods(sce_milo)) * frac_hoods_sig.thresh) & milo_de_per_gene$frac_neg > frac_neg.thresh & milo_de_per_gene$logFC_sig < logFC.thresh]
+  #genes = milo_de_per_gene$gene[milo_de_per_gene$n_hoods_sig >= 63 & milo_de_per_gene$frac_neg > frac_neg.thresh & milo_de_per_gene$logFC_sig < logFC.thresh]
+  
+  milo_de = milo_de[!is.na(milo_de$logFC) & milo_de$gene %in% genes, ]
+  milo_de = milo_de[order(milo_de$Nhood) , ]
+  milo_de = reshape2::dcast(data = milo_de,formula = gene~Nhood,fun.aggregate = sum,value.var = "logFC_corrected")
+  rownames(milo_de) = milo_de$gene
+  milo_de = milo_de[,2:ncol(milo_de)]
+  milo_de = t(milo_de)
+  pcs = irlba::prcomp_irlba(t(milo_de) , n = nps )
+  pcs = pcs$x
+  rownames(pcs) = colnames(milo_de)
+  umaps = as.data.frame( uwot::umap(pcs , min_dist = 1) )
+  umaps = tibble::rownames_to_column(umaps , var = "gene")
+  # add clusters
+  graph_snn = buildSNNGraph(milo_de , d = nps)
+  clusters = cluster_louvain(graph_snn, weights = NULL , resolution = resolution)
+  umaps$cluster = as.character(clusters$membership)
+  umaps = merge(umaps , milo_de_per_gene , all.x = T , all.y = F)
+  return(umaps)
+}
+
+
+set.seed(32)
+louvain_clusters = get_louvain_clustering(milo_de)
+
+
+#genes_check = c("SPP1" , "CSF1" , "CTSK" , "FN1" , "SPARC" , "GPC4" , "MMP12"  , "IL1RN" , "IGHG1" , "CCL3" , "CCL4")
+
+#table(louvain_clusters$cluster)
+#louvain_clusters[louvain_clusters$gene %in% genes_check , ]
+
+
+
+```
+
+
+## Add fisher stat
+
+```{r get-fisher-stat, message = FALSE}
+
+
+
+get_fisher_stat = function(genes , milo_de, SpatialFDR.thresh = 0.05 , SpatialFDR_DA.thresh = 0.05 , type = "only_neg"){
+  milo_de = merge(milo_de , milo_da , all.x = T , all.y = F)
+  milo_de = milo_de[milo_de$logFC_DA < 0 , ]
+  
+  stat_fisher = lapply(genes , function(gene){
+    current.milo_de = milo_de[milo_de$gene == gene , ]
+    tab = table(current.milo_de$pval_corrected_across_nhoods <= SpatialFDR.thresh , 
+                current.milo_de$SpatialFDR_DA <= SpatialFDR_DA.thresh
+    )
+    if (nrow(tab) == 2 & ncol(tab) == 2){
+      rownames(tab) = c("gene_not_sig" , "gene_sig")
+      colnames(tab) = c("hood_not_da" , "hood_da")
+      tab = t(tab)
+      
+      test_fisher = fisher.test(tab)
+      test_fisher = test_fisher$p.value
+      
+      test_chi = chisq.test(tab)
+      test_chi = test_chi$p.value
+      
+      out = data.frame(gene = gene , test_fisher = test_fisher , test_chi = test_chi,
+                       ratio_da = tab[2,2]/sum(tab[2,]) , 
+                       ratio_not_da = tab[1,2]/sum(tab[1,]) 
+      )
+      return(out)
+      
+    }
+    
+  })
+  stat_fisher = do.call(rbind , stat_fisher)
+  stat_fisher$test_fisher_corrected = p.adjust(stat_fisher$test_fisher , method = "BH")
+  stat_fisher$test_chi_corrected = p.adjust(stat_fisher$test_chi , method = "BH")
+  
+  # add type
+  stat_fisher$type = sapply(1:nrow(stat_fisher) , function(i){
+    if (stat_fisher$test_fisher_corrected[i] > 0.05) {
+      out = "no_difference"
+    } else if (stat_fisher$ratio_not_da[i] > stat_fisher$ratio_da[i]){
+      out = "de_in_balanced_hoods"
+    } else {
+      out = "de_in_ipf_enriched_hoods"
+    }
+    return(out)
+  })
+  
+  return(stat_fisher)
+}
+
+
+
+stat_fisher = get_fisher_stat(louvain_clusters$gene , milo_de )
+
+louvain_clusters = merge(louvain_clusters , stat_fisher , all.x = T , all.y = F)
+louvain_clusters$type = factor(louvain_clusters$type , levels = c("de_in_balanced_hoods" , "no_difference" , "de_in_ipf_enriched_hoods"))
+
+
+
+```
+
+# Sort clusters
+
+## Add nhood markers
+
+```{r nhood-markers-per-cluster, message = FALSE}
+
+
+milo_de_louvain_genes = milo_de[milo_de$gene %in% louvain_clusters$gene , ]
+milo_de_louvain_genes = merge(milo_de_louvain_genes , louvain_clusters[ , c("gene" , "cluster")] , all.x = T)
+milo_sce = reshape2::dcast(milo_de_louvain_genes , formula = Nhood ~ gene , fun.aggregate = mean , value.var = "logFC_corrected")
+rownames(milo_sce) = milo_sce$Nhood
+milo_sce = milo_sce[, 2:ncol(milo_sce)]
+milo_sce = milo_sce[ , order(colnames(milo_sce))]
+louvain_clusters = louvain_clusters[order(louvain_clusters$gene) , ]
+
+
+milo_sce = SingleCellExperiment(list(logcounts = milo_sce))
+milo_sce$cluster = louvain_clusters$cluster
+
+hood_markers = scran::findMarkers(milo_sce , groups = milo_sce$cluster , direction = "down" , pval.type = "any")
+
+hood_markers = lapply(1:length(hood_markers), function(i){
+  current.hood_markers = as.data.frame( hood_markers[[i]] )
+  current.hood_markers = current.hood_markers[, c("FDR" , "summary.logFC" , "Top")]
+  current.hood_markers$cluster = names(hood_markers)[i]
+  current.hood_markers = rownames_to_column(current.hood_markers , var = "Nhood")
+  current.hood_markers$Nhood = as.numeric(current.hood_markers$Nhood)
+  return(current.hood_markers)
+})
+hood_markers = do.call(rbind, hood_markers)
+hood_markers = hood_markers[hood_markers$Top < 4 ,]
+hood_markers = merge(hood_markers , milo_da[, c("Nhood" , "logFC_DA" , "SpatialFDR_DA")])
+
+
+
+```
+
+## Sort clusters by average logFC-DA for nhood markers
+
+```{r sort-clusters, message = FALSE}
+
+
+stat_hood_markers = as.data.frame(hood_markers %>% group_by(cluster) %>% dplyr::summarise(median_logFC_DA = median(logFC_DA)))
+stat_hood_markers = stat_hood_markers[order(stat_hood_markers$median_logFC_DA , decreasing = T) ,]
+
+cluster_id = data.frame(cluster_id = paste0("IPF-" , c(1:nrow(stat_hood_markers))) , cluster = stat_hood_markers$cluster)
+louvain_clusters = merge(louvain_clusters , cluster_id , all.x = T)
+louvain_clusters$cluster_id = factor(louvain_clusters$cluster_id , levels = paste0("IPF_" , c(1:nrow(stat_hood_markers))))
+# save later
+
+hood_markers = merge(hood_markers , cluster_id , all.x = T)
+hood_markers$cluster_id = factor(hood_markers$cluster_id , levels = paste0("IPF-" , c(1:nrow(stat_hood_markers))))
+
+
+```
+
+
+# Spatial signatures
+
+```{r spat-signatures, message = FALSE}
+
+
+library(stringr)
+plots = lapply(levels(louvain_clusters$cluster_id) , function(cluster_id){
+  genes = louvain_clusters$gene[louvain_clusters$cluster_id == cluster_id]
+  p = miloDE::plot_DE_gene_set(sce_milo , milo_de , genes = genes , size_range = c(0.5 , 5) , layout = "UMAP_mac" , edge_weight.thresh = 100) + 
+    guides(width=FALSE ,edge_width=FALSE) +
+    scale_fill_gradient2(name = "avg logFC") + scale_size(range = c(0.5 , 5), name="Frac. of\nsignificantly\nDE genes") + 
+    ggtitle(paste0(str_replace( cluster_id, "_" , "-")  , ", ", length(genes), " genes")) +
+    theme(plot.title = element_text(size=24)) +
+    theme(legend.text=element_text(size=17) , legend.title = element_text(size=20) ) 
+  p
+  ggsave(filename = paste0(figures.dir, "de_per_hood/spatial/", cluster_id, ".png"), plot = p, width = 6, height = 5)
+})
+
+
+```
+
+
+# Get bulk-DE
+
+```{r get-bulk-de, message = FALSE}
+
+
+get_de_genes_bulk = function(sce){
+  require(tibble)
+  require(edgeR)
+  summed = summarizeAssayByGroup(counts(sce), colData(sce)[,c("donor","disease", "dataset_origin")])
+  y <- DGEList(assay(summed, "sum"), samples=colData(summed), lib.size = colSums(assay(summed , "sum")))
+  # select genes
+  keep <- filterByExpr(y, group=summed$donor , min.count = 3 , min.total.count = 4.5)
+  y <- y[keep,]
+  y <- calcNormFactors(y)
+  design <- model.matrix(~ factor(dataset_origin) + factor(disease), y$samples)
+  y <- estimateDisp(y, design)
+  fit <- glmQLFit(y, design, robust=TRUE)
+  res <- glmQLFTest(fit, coef=ncol(design))
+  out = topTags(res, n = Inf )
+  out = as.data.frame(out)
+  out = rownames_to_column(out , var = "gene")
+  return(out)
+}
+
+
+de_bulk = get_de_genes_bulk(sce_milo)
+de_bulk = de_bulk[, c("gene" , "PValue" , "FDR" , "logFC")]
+colnames(de_bulk) = c("gene" , "PValue_bulk" , "FDR_bulk" , "logFC_bulk")
+
+louvain_clusters = merge(louvain_clusters , de_bulk , all.x = T , all.y = F)
+louvain_clusters$bulk_sig_fdr = louvain_clusters$FDR_bulk < 0.1
+louvain_clusters$bulk_sig_pval = louvain_clusters$PValue_bulk < 0.05
+
+
+# save louvain clusters
+saveRDS(louvain_clusters , paste0(root.dir , "data/processed/lung_macrophages/louvain_clusters_per_hood.Rds"))
+
+
+```
+
+# Plot per cluster stat
+
+## Nhood markers
+
+```{r plot-stat-nhood-markers, message = FALSE}
+
+
+cols = met.brewer("VanGogh1")[c(1,4,5,7)]
+p1 = ggplot(hood_markers , aes(x = cluster_id , y = logFC_DA , col = cluster_id)) +
+  geom_boxplot(outlier.shape = NA) + geom_jitter(size = 2, width = .1) +
+  theme_bw() +
+  theme(legend.position = "none") +
+  labs(x = "Gene set" , y = "logFC, DA") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  scale_color_manual(values = cols) +
+  #ggtitle("'Marker' hoods") +
+  coord_flip() +
+  theme(axis.text=element_text(size=15)) +
+  theme(legend.text=element_text(size=15) , legend.title = element_text(size=15) ) +
+  theme(text=element_text(size=15) , axis.text.x = element_text(size=13) , axis.text.y = element_text(size=13)) + 
+  scale_y_continuous(breaks = c(-4,-2,0,2)) +
+  ylim(c(-5,3.5)) 
+p1
+ggsave(filename = paste0(figures.dir, "de_per_hood/", "hood_markers" ,".png"), plot = p1, width = 2.5, height = 3)
+
+
+
+# check that wilcoxon < 0.05
+wilcox.test(hood_markers$logFC_DA[hood_markers$cluster_id == "IPF-1"], hood_markers$logFC_DA[hood_markers$cluster_id == "IPF-3"], alternative = "two.sided")
+wilcox.test(hood_markers$logFC_DA[hood_markers$cluster_id == "IPF-1"], hood_markers$logFC_DA[hood_markers$cluster_id == "IPF-4"], alternative = "two.sided")
+wilcox.test(hood_markers$logFC_DA[hood_markers$cluster_id == "IPF-2"], hood_markers$logFC_DA[hood_markers$cluster_id == "IPF-3"], alternative = "two.sided")
+wilcox.test(hood_markers$logFC_DA[hood_markers$cluster_id == "IPF-2"], hood_markers$logFC_DA[hood_markers$cluster_id == "IPF-4"], alternative = "two.sided")
+
+
+```
+
+## Fisher stat type
+
+```{r plot-stat-fisher, message = FALSE}
+
+
+tab = as.data.frame(table(louvain_clusters$cluster_id , louvain_clusters$type))
+colnames(tab) = c("cluster_id" , "type" , "n")
+tab$frac = sapply(1:nrow(tab) , function(i){
+  out = tab$n[i]/sum(tab$n[tab$cluster_id == tab$cluster_id[i]])
+  return(out)
+})
+
+cols_type = met.brewer("Kandinsky" , n = 3)
+cols_type = cols_type[c(1,3,2)]
+p2 = ggplot(tab , aes(x = cluster_id , y = frac , fill = type)) +
+  geom_bar(stat = "identity" , position = "stack") +
+  theme_bw() + 
+  scale_fill_manual(values = cols_type) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))  +
+  labs(x = "Gene cluster" , y = "Fraction of \n gene types") +
+  theme(legend.position = "none") +
+  coord_flip() +
+  labs( x = "") +
+  theme(axis.text.y = element_blank()) +
+  theme(axis.text=element_text(size=15)) +
+  theme(legend.text=element_text(size=15) , legend.title = element_text(size=15) ) +
+  theme(text=element_text(size=15) , axis.text.x = element_text(size=13) , axis.text.y = element_text(size=13))
+p2
+ggsave(filename = paste0(figures.dir, "de_per_hood/", "fisher_groups" ,".png"), plot = p2, width = 2, height = 3)
+
+
+```
+
+## DE bulk
+
+```{r plot-de-bulk, message = FALSE}
+
+
+cols_sig = met.brewer("Peru1" , n = 8)[c(1,6)]
+
+
+tab = as.data.frame(table(louvain_clusters$cluster_id , louvain_clusters$bulk_sig_fdr))
+colnames(tab) = c("cluster_id" , "bulk_sig_fdr" , "n")
+p3 = ggplot(tab , aes(x = cluster_id , y = n , fill = bulk_sig_fdr)) +
+  geom_bar(stat = "identity" , position = "stack") +
+  theme_bw() +
+  scale_fill_manual(values = cols_sig , name = "Significant \nin bulk DE") +
+  labs(x = "Gene cluster" , y = "# genes") +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  coord_flip() + 
+  theme(axis.text=element_text(size=15)) +
+  theme(legend.text=element_text(size=15) , legend.title = element_text(size=15) ) +
+  theme(text=element_text(size=15) , axis.text.x = element_text(size=13) , axis.text.y = element_text(size=13))
+p3
+ggsave(filename = paste0(figures.dir, "de_per_hood/", "comp_w_bulk_fdr" ,".png"), plot = p4, width = 2, height = 3)
+
+
+
+tab = as.data.frame(table(louvain_clusters$cluster_id , louvain_clusters$bulk_sig_pval))
+colnames(tab) = c("cluster_id" , "bulk_sig_pval" , "n")
+p3 = ggplot(tab , aes(x = cluster_id , y = n , fill = bulk_sig_pval)) +
+  geom_bar(stat = "identity" , position = "stack") +
+  theme_bw() +
+  scale_fill_manual(values = cols_sig , name = "Significant \nin bulk DE") +
+  labs(x = "Gene cluster" , y = "# genes") +
+  theme(legend.position = "none") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  coord_flip() + 
+  theme(axis.text=element_text(size=15)) +
+  theme(legend.text=element_text(size=15) , legend.title = element_text(size=15) ) +
+  theme(text=element_text(size=15) , axis.text.x = element_text(size=13) , axis.text.y = element_text(size=13))
+p3
+ggsave(filename = paste0(figures.dir, "de_per_hood/", "comp_w_bulk_pval" ,".png"), plot = p4, width = 2, height = 3)
+
+
+```
+
+## Trends along DA
+
+### Dotplot: average logFC and n-genes-sig
+
+```{r dotplot, message = FALSE}
+
+
+
+get_signatures = function(louvain_clusters , milo_de , pval.thresh = 0.05){
+  stat_center = lapply(unique(louvain_clusters$cluster_id) , function(cluster_id){
+    genes = louvain_clusters$gene[louvain_clusters$cluster_id == cluster_id]
+    current.milo_de = milo_de[milo_de$gene %in% genes, ]
+    out_1 = as.data.frame(current.milo_de %>% group_by(Nhood) %>% dplyr::summarise(n_sig = mean(pval_corrected_across_nhoods < pval.thresh , na.rm = T)))
+    out_2 = as.data.frame(current.milo_de %>% group_by(Nhood) %>% dplyr::summarise(logFC = mean(logFC , na.rm = T) , 
+                                                                                   logFC_corrected = mean(logFC_corrected , na.rm = T) ))
+    out_3 = as.data.frame(current.milo_de[current.milo_de$pval_corrected_across_nhoods < pval.thresh , ] %>% group_by(Nhood) %>% dplyr::summarise(logFC_sig = mean(logFC , na.rm = T)))
+    out = merge(out_1 , out_2, all.x = T , all.y = F)
+    out = merge(out, out_3 , all.x = T , all.y = F)
+    out$cluster_id = cluster_id
+    out = out[order(out$Nhood) , ]
+    return(out)
+  })
+  stat_center = do.call(rbind , stat_center)
+  return(stat_center)
+}
+
+
+
+stat_louvain_clusters = get_signatures(louvain_clusters , milo_de)
+stat_louvain_clusters = merge(stat_louvain_clusters , milo_da[ , c("Nhood" , "logFC_DA", "logFC_quantiled")])
+
+
+
+stat = as.data.frame(stat_louvain_clusters %>% group_by(cluster_id , logFC_quantiled ) %>% dplyr::summarise(
+  logFC_corrected = mean(logFC_corrected , na.rm = T) ,
+  n_sig = mean(n_sig)))
+stat = stat[order(stat$logFC_quantiled) , ]
+
+
+x = unique(-1*stat$logFC_quantiled)
+x = x[seq(1,length(x) , 4)]
+p = ggplot(stat , aes(x = factor(-logFC_quantiled) , y = cluster_id )) +
+  geom_point(aes(colour=logFC_corrected , size = n_sig)) + 
+  geom_point(aes(size = n_sig), shape = 1,colour = "black") +
+  scale_color_gradient2(low = "#9E0142" , high = "white" , limits = c(-1,0) , oob = squish , name = "", 
+                       breaks = c(-1 , -0.5 , 0)) +
+  #theme(legend.position = "top") +
+  labs(x = "-logFC, DA" , y = "Gene set") +
+  cowplot::theme_cowplot() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+  scale_x_discrete(breaks=x) +
+  theme(axis.text=element_text(size=15) , axis.title = element_text(size=15)) 
+p
+ggsave(filename = paste0(figures.dir, "de_per_hood/dotplot" ,".png"), plot = p, width = 8, height = 4)
+
+
+
+```
+
+# Per neighbourhood scaters
+
+```{r per-nhood-clusters, message = FALSE}
+
+
+stat_louvain_clusters$cluster_id = str_replace(stat_louvain_clusters$cluster_id, "_" , "-")
+
+
+p1 = ggplot(stat_louvain_clusters , aes(x = logFC_DA , y = logFC_corrected , col = factor(cluster_id))) + 
+  geom_point(size = .75) +
+  scale_color_manual(values = cols) + 
+  xlim(c(-6,3.5)) + 
+  ylim(c(-2.75 , 0.25)) + 
+  facet_wrap(~cluster_id , ncol=4) +
+  theme_bw() + 
+  theme(legend.position = "none") +
+  labs(x = "logFC, DA" , y = "") +
+  theme(axis.text=element_text(size=13) , axis.title = element_text(size=15))
+p2 = ggplot(stat_louvain_clusters , aes(x = logFC_DA , y = n_sig , col = factor(cluster_id))) + 
+  geom_point(size = 1) +
+  scale_color_manual(values = cols) + 
+  xlim(c(-6,3.5)) + 
+  ylim(c(0 , 1)) + 
+  facet_wrap(~cluster_id , ncol=4) +
+  theme_bw() + 
+  theme(legend.position = "none") +
+  labs(x = "logFC, DA" , y = "") +
+  theme(axis.text=element_text(size=13) , axis.title = element_text(size=15)) 
+p = ggarrange(p1,p2,nrow=2 )
+p
+ggsave(filename = paste0(figures.dir, "de_per_hood/dotplot_quantification" ,".png"), plot = p, width = 9, height = 5)
+
+
+
+
+```
+
+# GOs
+
+## Get all GOs
+
+```{r get-gos, message = FALSE}
+
+
+
+get_go_terms = function(genes){
+  require(enrichR)
+  require(stringr)
+  gos <- as.data.frame( enrichr(genes, 'GO_Biological_Process_2021')[[1]] )
+  gos$n_tested_genes = length(genes)
+  gos$n_detected_genes_in_go = NaN
+  gos$n_total_genes_in_go = NaN  
+  
+  gos$Term_id = NaN
+  for (i in 1:nrow(gos)){
+    current.overlap = gos$Overlap[i]
+    current.overlap = str_split(current.overlap, "/")
+    gos$n_detected_genes_in_go[i] = as.numeric(current.overlap[[1]][1])
+    gos$n_total_genes_in_go[i] = as.numeric(current.overlap[[1]][2])
+    
+    current.go = gos$Term[i]
+    current.go = str_split(current.go, "GO:")
+    gos$Term[i] = substring(current.go[[1]][1], 1, nchar(current.go[[1]][1])-2)
+    gos$Term_id[i] = substring(current.go[[1]][2], 1, nchar(current.go[[1]][2])-1)
+  }
+  return(gos)
+}
+
+
+
+gos = lapply(levels(louvain_clusters$cluster_id) , function(cluster_id){
+  genes = louvain_clusters$gene[louvain_clusters$cluster_id == cluster_id]
+  out = get_go_terms(genes)
+  out$cluster_id = cluster_id
+  return(out)
+})
+gos = do.call(rbind , gos)
+
+# qucikly check
+plots = lapply(as.character(unique(gos$cluster_id))  , function(cluster_id){
+  current.gos = gos[gos$cluster_id == cluster_id & gos$Adjusted.P.value < 0.1, ]
+  if(nrow(current.gos) > 0){
+    current.gos = current.gos[order(current.gos$Adjusted.P.value) , ]
+    p = plotEnrich(current.gos , numChar = 80) + ggtitle(cluster_id) + 
+      theme(legend.position = "top")
+    print(p)
+  }
+})
+
+
+```
+
+## Heatmaps: GOs x cluster
+
+#### By absolute p-value
+
+```{r heatmap-gos, message = FALSE}
+
+
+
+K = 5
+gos_top = lapply(sort(unique(louvain_clusters$cluster_id)) , function(cluster_id){
+  current.gos = gos[gos$cluster_id == cluster_id , ]
+  current.gos = current.gos[order(current.gos$Adjusted.P.value) , ]
+  
+  current.genes = current.gos$Genes
+  current.genes[duplicated(current.genes, incomparables=NA)] <- NA
+  idx = which(!is.na(current.genes))
+  current.gos = current.gos$Term[idx[1:min(length(idx) , K)]]
+  return(current.gos)
+})
+gos_top = do.call(c , gos_top)
+gos_top[duplicated(gos_top, incomparables=NA)] <- NA
+gos_top = gos_top[!is.na(gos_top)]
+
+current.gos = gos[gos$Term %in% gos_top , ]
+current.gos$Term = factor(current.gos$Term , levels = gos_top) 
+
+
+p = ggplot(current.gos , aes(x = cluster_id , y = Term , fill = -log10(P.value))) +
+  geom_tile() +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  scale_fill_gradient2(low = muted("blue") , high = muted("red") , mid = "gainsboro", midpoint = -log10(0.05) , name = "-log10\n(PValue)") 
+p
+
+
+ggsave(filename = paste0(figures.dir, "de_per_hood/heatmap_gos" ,".png"), plot = p, width = 7, height = 7)
+
+
+
+```
+
+
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

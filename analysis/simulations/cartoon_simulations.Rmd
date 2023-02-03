@@ -1,0 +1,290 @@
+---
+title: "Cartoon to illustrate simulations analysis"
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---    
+# Load dependencies
+
+```{r load, message = FALSE}
+
+
+library(SingleCellExperiment)
+library(miloDE)
+library(miloR)
+library(ggplot2)
+library(ggpubr)
+library(viridis)
+library(MetBrewer)
+library(dplyr)
+
+ncores = 5
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+
+set.seed(32)
+
+#root.dir = "/Users/alsu/Develop/hubmap_metaRef/"
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+figures.dir = paste0(root.dir , "figures/detection_analysis/chimera_embryo/")
+
+
+```
+
+# Get simulated genes and main sce
+
+```{r load-data, message = FALSE}
+
+
+# get sce
+sce = readRDS(paste0(root.dir , "data/processed/simulations/sce_chimera_w_simulations.Rds"))
+sce_original = readRDS(paste0(root.dir , "data/sces/mouse_embryo/chimera/mouse_embryo_chimera_tal.Rds"))
+# subselect
+sce_original = sce_original[, sce_original$tal1 == 1]
+sce_original = sce_original[, order(colnames(sce_original))]
+sce = sce[, order(colnames(sce))]
+reducedDim(sce_original , "UMAP_scVI") = reducedDim(sce , "UMAP_scVI")
+
+sub_ct = "Floor plate"
+
+
+# get sce-milo
+sce_milo = readRDS(paste0(root.dir , "data/processed/simulations/sce_milo_w_simulations.Rds"))
+
+# get milo-de
+de_stat = readRDS(paste0(root.dir , "data/processed/simulations/milo_de_w_simulations.Rds"))
+
+
+```
+
+# UMAP, coloured by CT of interest
+
+```{r cartoon-ct-colored, message = FALSE}
+
+
+cols = met.brewer("Isfahan1" , n = 7)[c(5,3)]
+umaps = cbind(as.data.frame(colData(sce)) , as.data.frame(reducedDim(sce , "UMAP_scVI")))
+umaps$sub_celltype[!umaps$sub_celltype == sub_ct] = "Rest"
+umaps$sub_celltype = factor(umaps$sub_celltype , levels = c(sub_ct , "Rest"))
+umaps = umaps[order(umaps$sub_celltype , decreasing = T) , ]
+
+p = ggplot(umaps , aes(x = V1 , y = V2 , col = sub_celltype)) +
+  geom_point(size = .5) + 
+  scale_color_manual(values = cols) +
+  theme_bw() +
+  theme(legend.position = "none") + 
+  labs(x = "" , y = "") +
+  theme(axis.text=element_text(size=14))
+p
+ggsave(filename = paste0(figures.dir, "cartoon_sims/umap_w_CT", ".png"), plot = p, width = 3.5, height = 3.5)
+
+
+
+
+```
+
+
+## Assign nhoods and colour by frac-CT
+
+```{r cartoon-cover-nhoods, message = FALSE}
+
+
+set.seed(32)
+
+
+nhoods_sce = nhoods(sce_milo)
+nhood_stat = lapply(1:ncol(nhoods_sce) , function(i){
+  idx = which(nhoods_sce[,i] == 1)
+  cells = rownames(nhoods_sce)[idx]
+  out = data.frame(Nhood = i , frac_ct = mean(cells %in% colnames(sce_milo)[sce_milo$sub_celltype == sub_ct]))
+  return(out)
+})
+nhood_stat = do.call(rbind , nhood_stat)
+nhood_stat = nhood_stat[order(nhood_stat$Nhood) , ]
+
+p = miloDE::plot_milo_by_single_metric(sce_milo , nhood_stat , colour_by = "frac_ct" , layout = "UMAP_scVI" , order_by = "frac_ct" , order_direction = F , edge_weight.thresh  = 100 , size_range = c(1,4) , edge_width = c(.2,3)) + 
+  scale_fill_gradient2(low = "white" , high = "deeppink4" , name = "") +
+  guides(size=FALSE, width=FALSE ,edge_width=FALSE , color = guide_legend(override.aes = list(size=20)))
+p
+ggsave(filename = paste0(figures.dir, "cartoon_sims/milo_w_frac_CT", ".png"), plot = p, width = 3.5, height = 3)
+
+
+
+```
+
+
+## Split by CT purity thresh
+
+```{r plot-nhood-by-binary-ct-purity, message = FALSE}
+
+
+nhood_stat$frac_ct_round = round(nhood_stat$frac_ct , 1)
+nhood_stat$frac_ct_01 = nhood_stat$frac_ct >= 0.1
+nhood_stat$frac_ct_05 = nhood_stat$frac_ct >= 0.5
+
+cols =  met.brewer("Isfahan1" , n = 7)[c(3,5)]
+p1 = miloDE::plot_milo_by_single_metric(sce_milo , nhood_stat , colour_by = "frac_ct_01" , layout = "UMAP_scVI" , order_by = "frac_ct_01" , size_by = "frac_ct_01", order_direction = F , edge_weight.thresh  = 100 , size_range = c(1,4) , edge_width = c(.2,3)) + 
+  scale_fill_manual(values = cols , name = "") +
+  guides(size=FALSE, width=FALSE ,edge_width=FALSE ) + 
+  theme(legend.position = "none")
+p2 = miloDE::plot_milo_by_single_metric(sce_milo , nhood_stat , colour_by = "frac_ct_05" , layout = "UMAP_scVI" , order_by = "frac_ct_05" , size_by = "frac_ct_05", order_direction = F , edge_weight.thresh  = 100 , size_range = c(1,4) , edge_width = c(.2,3)) + 
+  scale_fill_manual(values = cols , name = "") +
+  guides(size=FALSE, width=FALSE ,edge_width=FALSE ) + 
+  theme(legend.position = "none")
+p = ggarrange(p1,p2)
+p
+ggsave(filename = paste0(figures.dir, "cartoon_sims/milo_w_diff_purity_thresh", ".png"), plot = p, width = 7, height = 3.5)
+
+
+```
+
+# Get miloDE for examplery gene
+
+```{r get-data, message = FALSE}
+
+
+gene = "ENSMUSG00000058979"
+de_stat_single_gene = de_stat[de_stat$gene == gene , ]
+de_stat_single_gene$pval_corrected_across_nhoods[is.na(de_stat_single_gene$pval_corrected_across_nhoods)] = 1
+de_stat_single_gene$gene_sig = de_stat_single_gene$pval_corrected_across_nhoods < 0.1
+de_stat_single_gene = de_stat_single_gene[order(de_stat_single_gene$Nhood) , ]
+
+
+cols = c( met.brewer("Isfahan1" , n = 7)[c(3)] , met.brewer("Homer1" , n = 5)[c(1)])
+p = plot_milo_by_single_metric(sce_milo , nhood_stat = de_stat_single_gene , layout = "UMAP_scVI" , edge_weight.thresh = 100 , size_range = c(1,4) , edge_width = c(.2,3) , colour_by = "gene_sig" , order_direction = F , order_by = "gene_sig" , size_by = "gene_sig") +
+  scale_fill_manual(values = cols , name = "") +
+  guides(size=FALSE, width=FALSE ,edge_width=FALSE ) + 
+  theme(legend.position = "none")
+p
+ggsave(filename = paste0(figures.dir, "cartoon_sims/", "milo_de_gene", ".png"), plot = p, width = 3.5, height = 3)
+
+
+
+```
+
+# UMAPs w altered counts
+
+```{r umap-w-altered-counts, message = FALSE}
+
+
+get_umaps = function(sce , gene , color_scheme){
+  require(viridis)
+  require(scales)
+  
+  umaps = cbind(as.data.frame(colData(sce)) , as.data.frame(reducedDim(sce , "UMAP_scVI")))
+  umaps$type[umaps$type == "wt"] = "WT"
+  umaps$type[umaps$type == "chimera"] = "ChimeraWT"
+  umaps$type = factor(umaps$type , levels = c("WT" , "ChimeraWT"))
+  umaps$counts = as.numeric(counts(sce[gene , ]))
+  umaps = umaps[order(umaps$counts) , ] 
+  umaps$counts[umaps$counts > 3] = 3
+  p = ggplot(umaps , aes(x = V1 , y = V2 , col = counts)) +
+    geom_point(size = 0.75) +
+    facet_wrap(~type , ncol = 2) +
+    theme_bw() +
+    labs(x = "" , y = "") + 
+    theme(axis.text=element_text(size=15)) +
+    theme(legend.text=element_text(size=15) , legend.title = element_text(size=15) ) + 
+    theme(text=element_text(size=15) , axis.text.x = element_text(size=12) , axis.text.y = element_text(size=12)) 
+    
+  if (color_scheme == "viridis"){
+    p = p + scale_color_viridis(discrete = F)
+  } else{
+    p = p + scale_color_gradient2(low = "gainsboro" , high = muted("green"))
+  } 
+  return(p)
+}
+
+
+get_umaps_combined = function(gene , color_scheme){
+  p1 = get_umaps(sce = sce_original , gene , color_scheme)
+  p2 = get_umaps(sce = sce , gene , color_scheme)
+  p = ggarrange(p1,p2 , common.legend = T , legend = "top")
+  return(p)
+}
+
+
+p = get_umaps_combined(gene = "ENSMUSG00000058979" , color_scheme = "viridis")
+p
+ggsave(filename = paste0(figures.dir, "cartoon_sims/umaps_w_gene/", "viridis", ".png"), plot = p, width = 9, height = 3)
+
+p = get_umaps_combined(gene = "ENSMUSG00000058979" , color_scheme = "gradient")
+p
+ggsave(filename = paste0(figures.dir, "cartoon_sims/umaps_w_gene/", "gradient", ".png"), plot = p, width = 9, height = 3)
+
+
+
+
+
+```
+
+# Calc stat - TPR and FDR
+
+```{r calc-stat, message = FALSE}
+
+
+de_stat_single_gene = merge(de_stat_single_gene , nhood_stat , all.x = T)
+
+
+get_detection_stat = function(category , response , response.thresh = 0.1){
+  response = response <= response.thresh
+  fp = sum(category == 0 & response == 1)
+  fn = sum(category == 1 & response == 0)
+  tp = sum(category == 1 & response == 1)
+  tn = sum(category == 0 & response == 0)
+  sensitivity = tp/(tp + fn)
+  specificity = tn/(tn + fp)
+  fdr = fp/(fp + tp)
+  fomr = fn/(fn + tn)
+  out = data.frame(sensitivity = sensitivity , specificity = specificity , fdr = fdr , fomr = fomr)
+  return(out)
+}
+
+
+stat = lapply(c(0.1 , 0.5) , function(ct_specificity.thresh){
+  out = get_detection_stat(de_stat_single_gene$frac_ct >= ct_specificity.thresh , de_stat_single_gene$pval_corrected_across_nhoods , response.thresh = 0.1)
+  out$ct_specificity.thresh = ct_specificity.thresh
+  return(out)
+})
+stat = do.call(rbind , stat)
+
+
+cols = met.brewer("Hokusai3" , n = 7)[c(2,3)]
+  
+p1 = ggplot(stat, aes(x = factor(ct_specificity.thresh) , y = sensitivity , fill = factor(ct_specificity.thresh))) +
+  geom_bar(stat = "identity" , position = "dodge") +
+  theme_bw() + 
+  theme(legend.position = "none") + 
+  labs(x = "CT purity threshold" , y = "Sensitivity") +
+  scale_fill_manual(values = cols) + 
+  ylim(c(0,1)) +
+  theme(axis.text=element_text(size=17)) +
+  theme(legend.text=element_text(size=17) , legend.title = element_text(size=17) ) + 
+  theme(text=element_text(size=17) , axis.text.x = element_text(size=12) , axis.text.y = element_text(size=12)) 
+p2 = ggplot(stat, aes(x = factor(ct_specificity.thresh) , y = fdr , fill = factor(ct_specificity.thresh))) +
+  geom_bar(stat = "identity" , position = "dodge") +
+  theme_bw() + 
+  theme(legend.position = "none") + 
+  labs(x = "CT purity threshold" , y = "FDR") + 
+  scale_fill_manual(values = cols) + 
+  ylim(c(0,1)) +
+  theme(axis.text=element_text(size=17)) +
+  theme(legend.text=element_text(size=17) , legend.title = element_text(size=17) ) + 
+  theme(text=element_text(size=15) , axis.text.x = element_text(size=12) , axis.text.y = element_text(size=12)) 
+p = ggarrange(p1,p2 , nrow = 2)
+p
+ggsave(filename = paste0(figures.dir, "cartoon_sims/stat", ".png"), plot = p, width = 3, height = 4)
+
+
+```
+
+
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

@@ -1,0 +1,155 @@
+---
+title: "Analysis to estimate [n-hood -- fraction of cells 'missed'] for different filtering options."
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+```{r load, message = FALSE}
+
+
+library(miloDE)
+library(miloR)
+library(BiocParallel)
+library(ggplot2)
+library(MetBrewer)
+
+ncores = 5
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+
+set.seed(32)
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+figures.dir = paste0(root.dir , "figures/optimal_coverage/k_2_hood_size/")
+
+# load sce
+sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/WT/mouse_embryo_E8.5.Rds"))
+
+# assign colours
+cols_filtering = MetBrewer::met.brewer("Benedictus" , n = 12)[c(9 , 2)]
+
+
+```
+
+
+# Stat: prop, order, k, prop ~ fraction of cells uncovered
+
+This part is to estimate which prop is consistenyl high enough - it is not included in the manuscript
+
+```{r get-stat-frac-not-covered, message = FALSE}
+
+
+get_stat = function(sce_milo){
+  nhoods_sce = nhoods(sce_milo)
+  frac_cells_not_covered = mean( apply(nhoods_sce , 1 , function(x) sum(x > 0)) == 0)
+  mean_nhood_size = mean( colSums(nhoods_sce) )
+  out = data.frame(mean_nhood_size = mean_nhood_size , 
+                   frac_cells_not_covered = frac_cells_not_covered)
+  return( out )
+}
+
+
+anno_1 = expand.grid(order = 1 , k = seq(50 , 300 , 50) , prop = c(0.01, 0.02, 0.05, 0.1, 0.2))
+anno_2 = expand.grid(order = 2 , k = seq(5 , 30 , 5), prop = c(0.01, 0.02, 0.05, 0.1, 0.2))
+anno = rbind(anno_1 , anno_2)
+
+
+stat_frac_cells_not_covered = bplapply(1:nrow(anno) , function(i){
+  sce_milo = miloDE::assign_neighbourhoods(sce , reducedDim_name = "pca.corrected" , k = anno$k[i] , prop = anno$prop[i] , order = anno$order[i] , filtering = F)
+  return(get_stat(sce_milo))
+} , BPPARAM = mcparam)
+stat_frac_cells_not_covered = do.call(rbind , stat_frac_cells_not_covered)
+
+stat_frac_cells_not_covered = cbind(anno, stat_frac_cells_not_covered)
+# round mean nhood-size
+stat_frac_cells_not_covered$mean_nhood_size_round = round(stat_frac_cells_not_covered$mean_nhood_size , -2)
+
+
+p = ggplot(stat_frac_cells_not_covered, aes(x = factor(prop) , y = frac_cells_not_covered , fill = factor(prop))) +
+  geom_boxplot() +
+  theme_bw() + 
+  labs(x = "Proportion" , y = "Fraction of not covered cells") + 
+  scale_fill_manual(values = met.brewer("OKeeffe1" , n = length(unique(stat_frac_cells_not_covered$prop)))) + 
+  theme(legend.position = "none")
+p
+ggsave(filename = paste0(figures.dir , "frac_not_covered_vs_prop.png"), plot = p, width = 4, height = 3)
+
+
+
+```
+
+# Get stat - how many fraction of not covered cells unfiltered sce-milo has
+
+```{r get-stat-filtering, message = FALSE}
+
+
+get_frac_cells_not_covered = function(sce_milo){
+  nhoods_sce = nhoods(sce_milo)
+  out = apply(nhoods_sce , 1 , function(x) sum(x > 0))
+  out = mean( out == 0 )
+  return( out )
+}
+
+
+get_stat = function(sce , k , order ){
+  sce_milo_filtered = assign_neighbourhoods(sce , reducedDim.name = "pca.corrected" , k = k , prop = 0.2 , order = order , filtering = T)
+  nhoods_sce_filtered = nhoods(sce_milo_filtered)
+  n_hoods_filtered = ncol(nhoods_sce_filtered)
+  prop = n_hoods_filtered/ncol(sce)
+  
+  sce_milo = assign_neighbourhoods(sce , reducedDim.name = "pca.corrected" , k = k , prop =  1.05*prop, order = order , filtering = F)
+  
+  stat = data.frame(n_hoods = c(n_hoods_filtered , ncol(nhoods(sce_milo)) ) , 
+                                type = c(TRUE , FALSE) , 
+                                frac_cells_not_covered = c(get_frac_cells_not_covered(sce_milo_filtered) ,get_frac_cells_not_covered(sce_milo) ))
+  stat$order = order
+  stat$k = k
+  return(stat)
+}
+
+anno = expand.grid(order = 2 , k = seq(10 , 50 , 10) , round = c(1:5))
+
+stat = bplapply(1:nrow(anno) , function(i){
+  out = get_stat(sce , k = anno$k[i] , order = anno$order[i])
+  out$round = anno$round[i]
+  return(out)
+} , BPPARAM = mcparam)
+stat = do.call(rbind , stat)
+stat$id = paste0(stat$order , "_" , stat$k)
+stat$type = factor(stat$type  , levels = c(FALSE , TRUE))
+
+
+p1 = ggplot(stat , aes(x = type , y = n_hoods , fill = type)) +
+  geom_boxplot() +
+  theme_bw() +
+  scale_fill_manual(values = cols_filtering , name = "Neighbourhood\nrefinement") +
+  theme(axis.text.x = element_blank()) + 
+  facet_wrap(~k , ncol = nrow(anno), scales = "free") + 
+  labs(x = "" , y = "# neighbourhoods") +
+  theme(legend.position = "right")
+p2 = ggplot(stat  , aes(x = type , y = frac_cells_not_covered , fill = type)) +
+  geom_boxplot() +
+  theme_bw() +
+  scale_fill_manual(values = cols_filtering, name = "Neighbourhood\nrefinement") +
+  theme(axis.text.x = element_blank()) + 
+  facet_wrap(~k , ncol = nrow(anno)) + 
+  labs(x = "" , y = "Fraction of not\ncovered cells") +
+  theme(legend.position = "right")
+p = ggarrange(p1,p2, nrow = 2 , common.legend = T , legend = "right")  
+p
+ggsave(filename = paste0(figures.dir , "filtering_vs_frac_not_covered.png"), plot = p, width = 10, height = 4)
+  
+
+
+```
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

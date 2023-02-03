@@ -1,0 +1,125 @@
+---
+title: "This pipeline to calculate AUC stat per neighbourhood for splatter simulations."
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+```{r load, message = FALSE}
+
+library(SingleCellExperiment)
+library(BiocParallel)
+library(splatter)
+library(scran)
+library(Augur)
+ncores = 10
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+set.seed(32)
+
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+
+
+```
+
+# Load data
+
+```{r load-sims, message = FALSE}
+
+
+sims_wo_batch = readRDS(paste0(root.dir , "data/processed/hood_selection/sims_wo_batch.Rds"))
+sims_w_batch_balanced = readRDS(paste0(root.dir , "data/processed/hood_selection/sims_w_batch_balanced.Rds"))
+sims_w_batch_misbalanced = readRDS(paste0(root.dir , "data/processed/hood_selection/sims_w_batch_misbalanced.Rds"))
+
+n_cells_total = c(5000)
+n_batches = c(5)
+group_prob = c(0.25 , 0.5 , 0.75)
+de_prob = c(0, 0.05 , 0.25)
+de_facLoc = c(1, 2)
+
+anno = expand.grid(n_cells_total = n_cells_total , n_batches = n_batches,  group_prob = group_prob , de_prob = de_prob, de_facLoc = de_facLoc)
+anno = unique(anno)
+
+
+```
+
+# Set functions
+
+```{r funcs, message = FALSE}
+
+
+filter_samples_with_low_n_cells_in_hood = function(sce , n_cells.thresh = 2){
+  tab = table(sce$sample)
+  samples_2_keep = names(tab)[tab > n_cells.thresh]
+  sce = sce[, sce$sample %in% samples_2_keep]
+  return(sce)
+}
+
+
+get_augur_stat_one_hood = function(sce){
+  sce = filter_samples_with_low_n_cells_in_hood(sce , n_cells.thresh = 2)
+  sce$celltype.dummy = "dummy"
+  meta = as.data.frame(colData(sce))
+  if (ncol(sce) > 0){
+    auc = calculate_auc(logcounts(sce), meta, cell_type_col = "celltype.dummy", label_col = "Group" , n_subsamples = 0 , subsample_size = 3 , min_cells = 3)
+    out = as.data.frame(auc$AUC)
+    return(out)
+  }
+  else {
+    return(NULL)
+  }
+}
+
+
+get_augur_stat_one_sim = function(sims , i , batch , K = 100){
+  sim = sims[[i]]
+  stat = bplapply(1:K , function(round){
+    n_cells = sample(c(75:500) , 1)
+    cells = sample(colnames(sim) , n_cells)
+    current.sim = sim[, cells]
+    current.stat = get_augur_stat_one_hood(current.sim)
+    current.stat$n_cells = n_cells
+    current.stat$round = round
+    return(current.stat)
+  }, BPPARAM = mcparam)
+  stat = do.call(rbind , stat)
+  stat = suppressWarnings( cbind(stat , anno[i,]) )
+  stat$sim.idx = i
+  stat$batch = batch
+  return(stat)
+}
+
+
+
+```
+
+
+# Get Augut stat
+
+```{r get-stat, message = FALSE}
+
+
+stat_augur = lapply(1:nrow(anno) , function(i){
+  stat_wo_batch = get_augur_stat_one_sim(sims_wo_batch , i , batch = "no_batch")
+  stat_w_batch_balanced = get_augur_stat_one_sim(sims_w_batch_balanced , i , batch = "batch_balanced")
+  stat_w_batch_misbalanced = get_augur_stat_one_sim(sims_w_batch_misbalanced , i , batch = "batch_misbalanced")
+  stat_per_sim = rbind(stat_wo_batch , stat_w_batch_balanced , stat_w_batch_misbalanced)
+  return(stat_per_sim)
+})
+stat_augur = do.call(rbind , stat_augur)
+stat_augur$id = paste0(stat_augur$sim.idx , "_" , stat_augur$batch)
+saveRDS(stat_augur , file = paste0(root.dir , "data/processed/hood_selection/stat_augur.Rds"))
+
+
+
+```
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

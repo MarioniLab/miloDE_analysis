@@ -1,0 +1,326 @@
+---
+title: "This pipeline to generate chimera dataset ( WT + chimera, different embeddings)"
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+
+
+# Load dependencies
+
+```{r load, message = FALSE}
+
+
+library(SingleCellExperiment)
+library(MouseGastrulationData)
+library(scran)
+library(uwot)
+library(BiocParallel)
+library(zellkonverter)
+ncores = 2
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+source(paste0(root.dir , "miloDE_analysis/core_functions.R"))
+
+set.seed(32)
+
+
+```
+
+# Load WT data (E8.5)
+
+```{r load-wt-data, message = FALSE}
+
+
+sce_ref = readRDS(paste0(root.dir , "data/sces/mouse_embryo/WT/mouse_embryo_E8.5.Rds"))
+sce_ref$type = "wt"
+sce_ref$tal1 = 1
+  
+
+```
+
+# Load chimera data (Tal1 one)
+
+```{r load-tal-data, message = FALSE}
+
+
+sce_chimera = Tal1ChimeraData()
+
+# select tomato positive cells (tal1 KO); delete doublets and stripped
+sce_chimera = sce_chimera[, !sce_chimera$celltype.mapped %in% c("Doublet" , "Stripped")]
+
+# delete row for tomato
+sce_chimera = sce_chimera[!rownames(sce_chimera) == "tomato-td" , ]
+
+# add chimera_ prefix to avoid conclusion
+colnames(sce_chimera) = paste0("chimera_" , colnames(sce_chimera) )
+sce_chimera$cell = paste0("chimera_" ,sce_chimera$cell)
+sce_chimera$sample = paste0("chimera_" , sce_chimera$sample )
+
+sce_chimera$type = "chimera"
+sce_chimera$tal1 = ifelse(sce_chimera$tomato , 0 , 1)
+
+
+```
+
+# Concatenate and add logcounts
+
+```{r add-logcounts, message = FALSE}
+
+
+# order rownames, check that dss are concatenable
+sce_ref = sce_ref[order(rownames(sce_ref)) , ]
+sce_chimera = sce_chimera[order(rownames(sce_chimera)) , ]
+print(mean(rownames(sce_ref) == rownames(sce_chimera)))
+
+# concatenate
+sce = SingleCellExperiment(list(counts = cbind(counts(sce_ref) , counts(sce_chimera))))
+# add metadata
+sce$cell = c(sce_ref$cell , sce_chimera$cell)
+sce$celltype = c(sce_ref$celltype , sce_chimera$celltype.mapped)
+sce$sample = c(sce_ref$sample , sce_chimera$sample)
+sce$type = c(sce_ref$type , sce_chimera$type)
+sce$tal1 = c(sce_ref$tal1 , sce_chimera$tal1)
+
+# add rowdata
+rowData(sce) = rowData(sce_ref)
+
+# add logcounts
+sce = add_logcounts(sce)
+
+
+```
+
+# Add reduced dims (embeddings)
+
+## MNN-corrected PCs (both modalities)
+
+### HVGs - ref + query
+
+```{r mnn-pcs-hvgs-all, message = FALSE}
+
+
+hvgs <- getTopHVGs(sce, n=3000)
+sce = add_batch_corrected_pca(sce , hvgs , reduced.dim_name = "pca.corrected_all" , bpparam = mcparam)
+
+# add umaps
+sce = scater::runUMAP(sce , dimred = "pca.corrected_all" , name = "UMAP_pca.corrected_all" , ncomponents = 2)
+
+
+```
+
+### HVGs - ref only
+
+```{r mnn-pcs-hvgs-ref, message = FALSE}
+
+
+hvgs <- getTopHVGs(sce[, sce$type == "wt"], n=3000)
+sce = add_batch_corrected_pca(sce , hvgs , reduced.dim_name = "pca.corrected_wt" , bpparam = mcparam)
+
+# add umaps
+sce = scater::runUMAP(sce , dimred = "pca.corrected_wt" , name = "UMAP_pca.corrected_wt" , ncomponents = 2)
+
+
+```
+
+### HVGs - query only
+
+```{r mnn-pcs-hvgs-query, message = FALSE}
+
+
+hvgs <- getTopHVGs(sce[, !sce$type == "wt"], n=3000)
+sce = add_batch_corrected_pca(sce , hvgs , reduced.dim_name = "pca.corrected_chimera" , bpparam = mcparam)
+
+# add umaps
+sce = scater::runUMAP(sce , dimred = "pca.corrected_chimera" , name = "UMAP_pca.corrected_chimera" , ncomponents = 2)
+
+
+```
+
+## MNN-corrected PCs (only ref)
+
+```{r mnn-only-ref, message = FALSE}
+
+
+sce_wt = sce[, sce$type == "wt"]
+sce_chimera = sce[, !sce$type == "wt"]
+hvgs <- getTopHVGs(sce_wt, n=3000)
+
+
+full_pca = multiBatchPCA(sce_wt , batch = factor(sce_wt$sample) , subset.row = hvgs, d = 30, preserve.single = TRUE, assay.type = "logcounts")
+ref_pca <- full_pca[[1]]
+to_proj <- (as.matrix(logcounts(sce_chimera)[hvgs,]) - rowMeans(as.matrix(logcounts(sce_chimera)[hvgs,])))/sqrt(rowVars(as.matrix(logcounts(sce_chimera)[hvgs,])))
+
+map_pca <- t(to_proj) %*% metadata(full_pca)$rotation
+big_pca <- rbind(ref_pca, map_pca)
+# check that rows are ordered correctly
+mean(rownames(big_pca) == colnames(sce))
+
+# correct
+out = reducedMNN(big_pca , batch = factor(sce$sample) )
+joint.pca = out$corrected
+reducedDim(sce , "pca.corrected_ref.proj") = joint.pca
+
+# add umaps
+sce = scater::runUMAP(sce , dimred = "pca.corrected_ref.proj" , name = "UMAP_pca.corrected_ref.proj" , ncomponents = 2)
+
+
+
+```
+
+
+## Azimuth
+
+```{r azimuth, message = FALSE}
+
+
+sce = add_azimuth_pca(sce , ref_samples = unique(sce$sample[sce$type == "wt"]), query_samples = unique(sce$sample[!sce$type == "wt"]), nPC = 30 , bpparam = mcparam , 
+                      reducedDim.name = "azimuth" )
+# add umaps
+sce = scater::runUMAP(sce , dimred = "azimuth" , name = "UMAP_azimuth" , ncomponents = 2)
+
+saveRDS(sce , file = paste0(root.dir , "data/sces/mouse_embryo/chimera/mouse_embryo_chimera_tal.Rds"))
+
+
+```
+
+
+## scVI
+
+Download results from python script here
+
+```{r add scvi, message = FALSE}
+
+
+sce = readRDS(file = paste0(root.dir , "data/sces/mouse_embryo/chimera/mouse_embryo_chimera_tal.Rds"))
+
+sce_scvi = readH5AD(paste0(root.dir , "data/sces/mouse_embryo/chimera/mouse_embryo_chimera_tal_w_scarches.h5ad") , reader = "R")
+# correct colnames
+colnames(sce_scvi) = sce_scvi$cell
+
+# reorder sce and sce-azimuth
+sce = sce[ , order(colnames(sce))]
+sce_scvi = sce_scvi[ , order(colnames(sce_scvi))]
+
+print(mean(colnames(sce) == colnames(sce_scvi)))
+
+reducedDim(sce , "scVI") = reducedDim(sce_scvi , "X_scVI")
+
+# add umaps
+sce = scater::runUMAP(sce , dimred = "scVI" , name = "UMAP_scVI" , ncomponents = 2)
+
+saveRDS(sce , file = paste0(root.dir , "data/sces/mouse_embryo/chimera/mouse_embryo_chimera_tal.Rds"))
+
+
+```
+
+
+# Add subclusters
+
+## Brain
+
+### Add louvain clustering
+
+```{r add-subclusters-brain-get-louvain, message = FALSE}
+
+
+sce = readRDS(file = paste0(root.dir , "data/sces/mouse_embryo/chimera/mouse_embryo_chimera_tal.Rds"))
+
+sce$sub_celltype = sce$celltype
+
+ct = "Forebrain/Midbrain/Hindbrain"
+sce_ct = sce[, sce$celltype == ct]
+reducedDim(sce_ct , "UMAP_scVI") = as.data.frame(uwot::umap(reducedDim(sce_ct , "scVI") , min_dist = 1))
+
+sce_ct = retain_informative_genes(sce_ct , n = 1000) 
+snn_graph = buildSNNGraph(reducedDim(sce_ct , "scVI"), k = 50 , d = 10 , transposed = T)
+clusters = cluster_louvain(snn_graph)  
+sce_ct$cluster = clusters$membership
+sce_ct$cluster = as.factor(sce_ct$cluster)
+
+umaps = cbind(as.data.frame(reducedDim(sce_ct , "UMAP_scVI")) , as.data.frame(colData(sce_ct)))
+p = ggplot(umaps , aes(x = V1 , y = V2 , col = cluster)) + 
+  geom_point() + 
+  theme_bw() + 
+  theme(legend.position = "top")
+p
+
+
+```
+
+### Plot UMAPs + counts
+
+```{r check-how-markers-look, message = FALSE}
+
+
+
+rowdata = as.data.frame(rowData(sce_ct))
+get_plot_w_colors = function(sce , gene){
+  umaps = cbind(as.data.frame(reducedDim(sce , "UMAP_scVI")) , as.data.frame(colData(sce)))
+  ensembl = rowdata$ENSEMBL[rowdata$SYMBOL == gene]
+  umaps$counts = as.numeric(logcounts(sce[ensembl , ]))
+  umaps = umaps[order(umaps$counts) , ]
+  p = ggplot(umaps , aes(x = V1 , y = V2 , col = counts)) +
+    geom_point(size=.75) + 
+    scale_color_viridis(discrete = F) +
+    theme_bw() + 
+    ggtitle(gene) + 
+    theme(legend.position = "none")
+  return(p)
+}
+
+
+genes = c("Shh" , "Rax" , "Six3" , "Otx2" , "En1" , "Hoxb2" , "Hoxa2" , "Gbx2")
+plots = lapply(genes , function(gene){
+  p = get_plot_w_colors(sce_ct , gene)
+  return(p)
+})
+p = ggarrange(plotlist = plots , ncol = 4 , nrow = 2)
+p
+
+
+
+
+```
+
+Clusters:
+
+7 -- floor plate
+4,5 -- forebrain
+1,6 -- midbrain
+2,3 -- hindbrain
+
+### Assign normal identities for clusters
+
+```{r add-subclusters-brain, message = FALSE}
+
+
+clusters = data.frame(cluster = c(1:7) , cluster_name = c("Midbrain" , "Hindbrain" , "Hindbrain" , "Forebrain" , "Forebrain" , "Midbrain" , "Floor plate"))
+
+sce_ct$sub_celltype = sapply(sce_ct$cluster , function(x) clusters$cluster_name[clusters$cluster == x])
+sce_ct$sub_celltype = factor(sce_ct$sub_celltype , sort(unique(sce_ct$sub_celltype)))
+
+# very ugly code but v quick to write
+for (sub_ct in unique(sce_ct$sub_celltype)){
+  print(sub_ct)
+  cells = sce_ct$cell[sce_ct$sub_celltype == sub_ct]
+  idx = which(sce$cell %in% cells)
+  sce$sub_celltype[idx] = sub_ct
+}
+saveRDS(sce , file = paste0(root.dir , "data/sces/mouse_embryo/chimera/mouse_embryo_chimera_tal.Rds"))
+
+
+
+```
+
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

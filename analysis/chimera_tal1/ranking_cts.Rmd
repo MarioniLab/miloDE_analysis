@@ -1,0 +1,178 @@
+---
+title: "Rank CTs by how much nhoods are 'perturbed'."
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+```{r load, message = FALSE}
+
+
+library(miloDE)
+library(miloR)
+library(SingleCellExperiment)
+
+library(MouseGastrulationData)
+library(ggplot2)
+library(ggpubr)
+# add parallelisation
+library(BiocParallel)
+ncores = 4
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+set.seed(32)
+
+
+root.dir = "/Users/alsu/Develop/hubmap_metaRef/"
+figures.dir = paste0(root.dir , "figures/chimera_embryo/blood_progenitors/")
+
+# load sce
+sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/chimera/mouse_embryo_chimera_tal_only.Rds"))
+sce$celltype = sce$celltype.mapped
+rowdata = as.data.frame(rowData(sce))
+# update tomato status to interpretable one
+sce$tomato = sapply(sce$tomato , function(x) ifelse(isTRUE(x) , "Tal1-" , "Tal1+"))
+sce$tomato = factor(sce$tomato , levels = c("Tal1+" , "Tal1-"))
+
+# focus on expressed genes - that essentially does not make a difference, but greatly reduces computing time for de testing
+sce = geneBasisR::retain_informative_genes(sce)
+
+
+```
+
+
+# UMAPs, split by type
+
+## All cells
+
+```{r umaps-and-da-all, message = FALSE}
+
+
+umaps = cbind( as.data.frame(reducedDim(sce , "UMAP")) , as.data.frame(colData(sce)))
+
+p = ggplot(umaps , aes(x = umap_1 , y = umap_2 , col = celltype)) + 
+  geom_point() + 
+  scale_color_manual(values = EmbryoCelltypeColours, name = "Cell\ntype") + 
+  theme_bw() +
+  theme(legend.position = "top") + 
+  facet_wrap(~tomato) +
+  labs(x = "" , y = "") +
+  xlim(c(-15 , 14)) + ylim(c(-16 , 16))
+p
+ggsave(filename = paste0(figures.dir, "umaps/", "all", ".png"), plot = p, width = 10, height = 6)
+
+
+
+```
+
+
+# Assign neighbourhoods
+
+```{r assign-nhoods, message = FALSE}
+
+
+set.seed(321)
+sce_milo = assign_neighbourhoods(sce , reducedDim_name = "pca.corrected" , k = 25, prop = 0.2 , order = 2, filtering = T)
+saveRDS(sce_milo , file = paste0(root.dir , "data/processed/chimera_tal1/sce_milo_all.Rds"))
+
+
+```
+
+
+# DE testing
+
+```{r milo-de, message = FALSE}
+
+
+de_stat = miloDE::de_test_neighbourhoods(sce_milo , sample_id = "sample" , design = ~tomato , covariates = "tomato" , 
+                                         output_type = "SCE", min_n_cells_per_sample = 1, BPPARAM = mcparam)
+saveRDS(de_stat , file = paste0(root.dir , "data/processed/chimera_tal1/de_stat_all.Rds"))
+
+```
+
+# Rank CTs by how many genes are DE (total and specific)
+
+```{r ct-ranking, message = FALSE}
+
+
+
+stat = rank_neighbourhoods_by_DE_magnitude(de_stat)
+# add celltypes
+stat_ct = data.frame(Nhood = c(1:ncol(nhoods(sce_milo))))
+stat_ct = miloR::annotateNhoods(x = sce_milo , stat_ct , coldata_col = "celltype")
+stat = merge(stat , stat_ct , all.x = T , all.y = F )
+
+
+get_plot_single_var = function(var , ylab){
+  dummy.stat = stat
+  dummy.stat$var = dummy.stat[, var]
+  stat_order = as.data.frame(dummy.stat %>% group_by(celltype) %>% dplyr::summarise(var = mean(var)))
+  stat_order = stat_order[order(stat_order$var , decreasing = F) , ]
+  dummy.stat$celltype = factor(dummy.stat$celltype, levels = stat_order$celltype)
+  
+  p = ggplot(dummy.stat , aes(x = celltype , y = var , fill = celltype)) +
+    geom_boxplot() + 
+    scale_fill_manual(values = EmbryoCelltypeColours) +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+    labs(x = "Cell type" , y = ylab) + 
+    theme(legend.position = "none") +
+    coord_flip()
+  return(p)
+}
+
+
+p = get_plot_single_var("n_DE_genes" , "# DE genes")
+p
+ggsave(filename = paste0(figures.dir, "ct_prioritisation/", "n_genes_sig", ".png"), plot = p, width = 3.5, height = 4)
+
+
+p = get_plot_single_var("n_specific_DE_genes" , "# specifically DE genes")
+p
+ggsave(filename = paste0(figures.dir, "ct_prioritisation/", "n_genes_spec", ".png"), plot = p, width = 3.5, height = 4)
+
+
+
+```
+
+## PGC cells - outlier neighbourhood
+
+```{r outlier-nhood-pgc, message = FALSE}
+
+
+hood_pgc = stat$Nhood[stat$celltype == "PGC"]
+nhoods_sce = nhoods(sce_milo)
+cells_pgc = names(which(nhoods_sce[, hood_pgc] == 1))
+
+meta = as.data.frame(colData(sce_milo))
+meta_pgc = meta[meta$cell %in% cells_pgc , ]
+meta_pgc$celltype[!meta_pgc$celltype %in% c("PGC" , "ExE ectoderm" , "ExE endoderm" , "Parietal endoderm")] = "other CTs"
+
+
+tab = as.data.frame( table(meta_pgc$celltype , meta_pgc$tomato) )
+colnames(tab) = c("celltype" , "tomato" , "n_cells")
+tab$celltype = factor(tab$celltype , levels = c("PGC" ,  "ExE endoderm" ,  "ExE ectoderm" , "Parietal endoderm" , "other CTs"))
+cols = wesanderson::wes_palette("Royal1" , n = 2)
+p = ggplot(tab , aes(x = celltype , y = n_cells , fill = tomato)) +
+  geom_bar(stat = "identity" , position = "dodge") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  labs(x = "Cell type" , y = "# cells") + 
+  scale_fill_manual(values = cols) +
+  theme(legend.position = "none")
+p
+ggsave(filename = paste0(figures.dir, "ct_prioritisation/", "pgc_hood", ".png"), plot = p, width = 5, height = 2)
+
+
+```
+
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

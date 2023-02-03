@@ -1,0 +1,420 @@
+---
+title: "Analysis of simulated data for order analysis."
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+```{r load, message = FALSE}
+
+
+library(miloDE)
+library(SingleCellExperiment)
+library(batchelor)
+library(tibble)
+library(batchelor)
+library(stringr)
+library(igraph)
+library(miloR)
+library(ggplot2)
+library(ggpubr)
+library(dplyr)
+library(BiocParallel)
+library(ggbeeswarm)
+
+ncores = 5
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+
+set.seed(32)
+
+#root.dir = "/Users/alsu/Develop/hubmap_metaRef/"
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+figures.dir = paste0(root.dir , "figures/sensitivity_analysis/chimera_embryo/")
+
+cols_order = c("#3b7c70", "#ce9642")
+names(cols_order) = c(1,2)
+
+```
+
+
+# Load simulated genes, sce-milo and milo-de
+
+```{r load-data, message = FALSE}
+
+
+simulated_genes = readRDS(file = paste0(root.dir , "data/processed/order_analysis/simulated_genes.Rds"))
+
+anno_1 = expand.grid(order = 1, k = c(75,150,200,250,350) , prop = c(0.1) , round = c(1:3))
+anno_2 = expand.grid(order = 2, k = c(seq(10,30,5), 40), prop = c(0.1), round = c(1:3))
+anno = rbind(anno_1 , anno_2)
+
+
+# sort out sub-celltypes
+sce = readRDS(paste0(root.dir , "data/processed/order_analysis/sce_chimera_w_simulations.Rds"))
+# update type names
+sce$type = sapply(sce$type , function(x) ifelse(x == "wt" , "WT" , "ChimeraWT"))
+sce$type = factor(sce$type , levels = c("WT" , "ChimeraWT"))
+
+rowdata = as.data.frame(rowData(sce))
+
+ct_levels = sort(table(sce$sub_celltype))
+ct_levels = names( ct_levels[names(ct_levels) %in% unique(simulated_genes$sub_celltype)] )
+
+
+```
+
+
+# CT composition
+
+```{r ct-composition, message = FALSE}
+
+
+tab = as.data.frame(table(sce$sub_celltype , sce$type))
+colnames(tab) = c("sub_celltype" , "type" , "n")
+tab = tab[tab$sub_celltype %in% ct_levels , ]
+tab$sub_celltype = factor(tab$sub_celltype , levels = ct_levels)
+
+cols = wesanderson::wes_palette("Royal1" , n = 2)
+
+p = ggplot(tab , aes(x = sub_celltype , y = n , fill = type)) +
+  geom_bar(stat = "identity" , position = "dodge") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  scale_fill_manual(values = cols , name = "Condition") +
+  labs(x = "Cell type" , y = "# cells") +
+  ylim(c(0, 200)) + 
+  theme(axis.text=element_text(size=15)) +
+  theme(legend.text=element_text(size=15) , legend.title = element_text(size=15) ) + 
+  theme(text=element_text(size=15) , axis.text.x = element_text(size=15) , axis.text.y = element_text(size=15)) + 
+  theme(legend.position = "top")
+p
+ggsave(filename = paste0(figures.dir, "ct_composition", ".png"), plot = p, width = 3.9, height = 4)
+
+
+```
+
+
+## What is logFC estimate for our genes
+
+```{r estimate-logfc, message = FALSE}
+
+
+
+get_de_genes = function( sub_celltype , genes){
+  require(edgeR)
+  current.sce = sce[, sce$sub_celltype == sub_celltype]
+  summed = summarizeAssayByGroup(counts(current.sce), colData(current.sce)[,c("sample","type")])
+  y <- DGEList(assay(summed, "sum"), samples=colData(summed), lib.size = colSums(assay(summed , "sum")))
+  y <- calcNormFactors(y)
+  design <- model.matrix(~ factor(type), y$samples)
+  y <- estimateDisp(y, design)
+  fit <- glmQLFit(y, design, robust=TRUE)
+  res <- glmQLFTest(fit, coef=ncol(design))
+  out = topTags(res, n = Inf )
+  out = as.data.frame(out)
+  out = rownames_to_column(out , var = "ENSEMBL")
+  out = merge(out , as.data.frame(rowData(sce)))
+  out$sub_celltype = sub_celltype
+  out = out[out$ENSEMBL %in% genes , ]
+  return(out)
+}
+
+
+de_stat = lapply(unique(simulated_genes$sub_celltype) , function(sub_celltype){
+  current.genes = simulated_genes$ENSEMBL[simulated_genes$sub_celltype == sub_celltype]
+  out = get_de_genes(sub_celltype , current.genes)
+  return(out)
+})
+de_stat = do.call(rbind , de_stat)
+simulated_genes = merge(de_stat[ , c("ENSEMBL" , "SYMBOL", "sub_celltype" , "logFC")] , simulated_genes , by = c("ENSEMBL" , "SYMBOL", "sub_celltype"))
+simulated_genes$logFC_round = round(simulated_genes$logFC , 1 )
+colnames(simulated_genes)[colnames(simulated_genes) == "logFC"] = "logFC_bulk"
+
+
+
+
+```
+
+# Get CT purity stat
+
+```{r ct-purity-stat, message = FALSE}
+
+
+get_ct_stat_single_milo = function(sce_milo , sub_celltype){
+  nhoods_sce = nhoods(sce_milo)
+  # celltype specificity per hood
+  cells_ct = which(sce_milo$sub_celltype == sub_celltype)
+  stat = lapply(1:ncol(nhoods_sce), function(i){
+    cells_hood = as.numeric(which(nhoods_sce[,i] == 1))
+    out = data.frame(ct_specificity = length(intersect(cells_hood , cells_ct))/length(cells_hood), ct_n_cells = length(intersect(cells_hood , cells_ct)) , 
+                     ct_inclusion = length(intersect(cells_hood , cells_ct))/length(cells_ct))
+    return(out)
+  })
+  stat = do.call(rbind , stat)
+  stat$Nhood = 1:ncol(nhoods_sce)
+  stat$hood_size = colSums(nhoods_sce)
+  stat$sub_celltype = sub_celltype
+  
+  # add average hood size
+  stat$avg_hood_size = round( mean(colSums(nhoods_sce)) )
+  
+  return(stat)
+}
+
+
+
+stat_ct_specificity = bplapply(1:nrow(anno) , function(i){
+  print(i)
+  sce_milo = readRDS(paste0(root.dir ,  "data/processed/order_analysis/sce_milo/" ,"sce_order_", anno$order[i] , "_k_" , anno$k[i] , "_round_" , anno$round[i], ".Rds"))
+  stat_per_ct = lapply(ct_levels , function(sub_ct){
+    out = get_ct_stat_single_milo(sce_milo , sub_ct)
+    return(out)
+  })
+  stat_per_ct = do.call(rbind , stat_per_ct)
+  stat_per_ct = cbind(stat_per_ct , anno[i, ])
+  stat_per_ct$idx = i
+  return(stat_per_ct)
+}, BPPARAM = mcparam)
+stat_ct_specificity = do.call(rbind , stat_ct_specificity)
+stat_ct_specificity = stat_ct_specificity[order(stat_ct_specificity$avg_hood_size) , ]
+stat_ct_specificity$sub_celltype = factor(stat_ct_specificity$sub_celltype , levels = ct_levels)
+stat_ct_specificity$order = factor(stat_ct_specificity$order , levels = c(1,2))
+# add order-k as id for coverage
+stat_ct_specificity$order_k = paste0(stat_ct_specificity$order , "_" , stat_ct_specificity$k)
+
+
+```
+
+### Aggregated stat for each coverage - number of nhoods and max CT-specificity
+
+```{r ct-purity-per-assignment, message = FALSE}
+
+
+tab = as.data.frame(stat_ct_specificity %>% group_by(sub_celltype , avg_hood_size , order , k , order_k,  prop , round) %>% dplyr::summarise(n_hoods = sum(ct_specificity > 0) , max_ct_specificity = max(ct_specificity) , max_ct_inclusion = max(ct_inclusion)))
+
+
+# add avg-hood-size bin
+stat_ct_specificity_per_coverage = as.data.frame(stat_ct_specificity %>% group_by(order_k) %>% dplyr::summarise(avg_hood_size_bin = round( mean(avg_hood_size) )) )
+stat_ct_specificity_per_coverage = stat_ct_specificity_per_coverage[order(stat_ct_specificity_per_coverage$avg_hood_size) , ]
+tab$order_k = factor(tab$order_k , levels = stat_ct_specificity_per_coverage$order_k)
+stat_ct_specificity_per_coverage$order_k = factor(stat_ct_specificity_per_coverage$order_k , levels = stat_ct_specificity_per_coverage$order_k)
+
+stat_ct_specificity_per_coverage$avg_hood_size_bin = factor(stat_ct_specificity_per_coverage$avg_hood_size_bin)
+
+tab = merge(tab , stat_ct_specificity_per_coverage , all.x = T)
+
+# order-k -> nhood size
+p = ggplot(tab , aes(x = order_k , y = avg_hood_size , col = order )) +
+  geom_boxplot() + geom_jitter(width = 0.2) +
+  scale_color_manual(values = cols_order , name = "Order") +
+  theme_bw()  + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  theme(legend.position = "top") + 
+  labs(x = "Order-k" , y = "Average\nneighbourhood size" ) +
+  theme(axis.text=element_text(size=15)) +
+  theme(legend.text=element_text(size=15) , legend.title = element_text(size=15) ) + 
+  theme(text=element_text(size=15) , axis.text.x = element_text(size=15) , axis.text.y = element_text(size=15)) 
+p
+ggsave(filename = paste0(figures.dir, "order_k__hood_size", ".png"), plot = p, width = 4, height = 4)
+
+# avg hood size - number of hoods
+p = ggplot(tab , aes(x = avg_hood_size_bin , y = n_hoods , col = order )) +
+  geom_boxplot() + geom_jitter(width = 0.2) +
+  scale_color_manual(values = cols_order , name = "order") +
+  theme_bw()  + 
+  facet_wrap(~sub_celltype, scales = "free" , ncol = 5) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1 )) +
+  theme(legend.position = "top") + 
+  labs(x = "Average neighbourhood size" , y = "# hoods" ) +
+  theme(axis.text=element_text(size=15)) +
+  theme(legend.text=element_text(size=15) , legend.title = element_text(size=15) ) + 
+  theme(text=element_text(size=15) , axis.text.x = element_text(size=11) , axis.text.y = element_text(size=15))
+p
+ggsave(filename = paste0(figures.dir, "avg_hood_size__n_hoods", ".png"), plot = p, width = 7, height = 3)
+
+# purity
+p = ggplot(tab , aes(x = avg_hood_size_bin , y = max_ct_specificity , col = order )) +
+  geom_boxplot() + geom_jitter(width = 0.1) +
+  scale_color_manual(values = cols_order , name = "Order") +
+  theme_bw()  + 
+  facet_wrap(~sub_celltype, scales = "free",  ncol = 5) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  theme(legend.position = "top") + 
+  labs(x = "Average neighbourhood size" , y = "Max CT purity\n(across neighbourhoods)" ) +
+  theme(axis.text=element_text(size=15)) +
+  theme(legend.text=element_text(size=15) , legend.title = element_text(size=15) ) + 
+  theme(text=element_text(size=15) , axis.text.x = element_text(size=11) , axis.text.y = element_text(size=15))
+p
+ggsave(filename = paste0(figures.dir, "avg_hood_size__ct_specificity", ".png"), plot = p, width = 7, height = 3)
+
+
+
+
+```
+
+
+# miloDE stat
+
+## Get stat
+
+
+```{r get-de-stat, message = FALSE}
+
+
+
+get_de_stat_single_milo = function(milo_de , sub_celltype){
+  current.genes = simulated_genes$ENSEMBL[simulated_genes$sub_celltype == sub_celltype]
+  current.milo_de = milo_de[milo_de$ENSEMBL %in% current.genes, ]
+  current.milo_de$order_k = paste0(current.milo_de$order, "_" , current.milo_de$k)
+  current.milo_de$avg_hood_size = round(current.milo_de$avg_hood_size)
+  
+  colnames(current.milo_de)[colnames(current.milo_de) == "sub_celltype"] = "sub_celltype_annotated"
+  colnames(current.milo_de)[colnames(current.milo_de) == "celltype"] = "celltype_annotated"
+  
+  order_k = current.milo_de$order_k[1]
+  round = current.milo_de$round[1]
+  
+  current.stat_spec = stat_ct_specificity[stat_ct_specificity$ct_specificity > 0 & stat_ct_specificity$sub_celltype == sub_celltype & stat_ct_specificity$order_k == order_k & stat_ct_specificity$round == round , c("Nhood" , "ct_specificity" , "ct_n_cells", "ct_inclusion")]
+  
+  current.milo_de = merge(current.milo_de , current.stat_spec , all.x = F , all.y = T)
+  current.milo_de$sub_celltype = sub_celltype
+  current.milo_de$pval_corrected_across_nhoods[is.na(current.milo_de$pval_corrected_across_nhoods)] = 1
+  current.milo_de$pval[is.na(current.milo_de$pval)] = 1
+  current.milo_de$gene_sig_bool_pval = current.milo_de$pval < 0.05
+  current.milo_de$gene_sig_bool_spatfdr = current.milo_de$pval_corrected_across_nhoods < 0.1
+  return(current.milo_de)
+}
+
+
+
+
+milo_de_stat = lapply(1:nrow(anno) , function(i){
+  milo_de = readRDS(file = paste0(root.dir ,  "data/processed/order_analysis/milo_de_selected/" ,"milo_de_order_", anno$order[i] , "_k_" , anno$k[i] , "_round_" , anno$round[i], ".Rds"))
+  
+  stat_per_ct = lapply(ct_levels  , function(sub_ct){
+    out = get_de_stat_single_milo(milo_de , sub_ct)
+    return(out)
+  })
+  stat_per_ct = do.call(rbind , stat_per_ct)
+  stat_per_ct$idx = i
+  return(stat_per_ct)
+})
+milo_de_stat = do.call(rbind , milo_de_stat)
+
+
+# add additional stat
+milo_de_stat = merge(milo_de_stat , stat_ct_specificity_per_coverage , all.x = T)
+milo_de_stat = merge(milo_de_stat , simulated_genes[, c("sub_celltype" , "ENSEMBL" , "range" , "frac_2_change" , "logFC_bulk", "logFC_round")] , by = c("sub_celltype" , "ENSEMBL") , all.x = T)
+
+
+
+```
+
+
+## Scater - CT purity, n-cells in CT & DE detection
+
+```{r ct-purity-n-cells-detection, message = FALSE}
+
+
+stat = as.data.frame(milo_de_stat[abs(milo_de_stat$logFC_bulk) >= 1 & abs(milo_de_stat$logFC_bulk) <= 6 , ] %>% group_by(sub_celltype ,  order_k , order  , round, Nhood) 
+                     %>% dplyr::summarise(frac_hoods_sig_pval = mean(gene_sig_bool_pval) , 
+                                          frac_hoods_sig_spatfdr = mean(gene_sig_bool_spatfdr),
+                                          mean_pval_corrected_across_nhoods = mean(-log10(pval_corrected_across_nhoods)),
+                                          ct_n_cells = mean(ct_n_cells) , hood_size = mean(hood_size) , 
+                                          ct_specificity = mean(ct_specificity)))
+stat = stat[order(stat$frac_hoods_sig_pval) , ]
+stat$order = paste0("Order = ", stat$order )
+
+
+p1 = ggplot(stat[stat$sub_celltype == "PGC" , ] , aes(x = ct_specificity , y = ct_n_cells , col = frac_hoods_sig_pval)) +
+  geom_point(size=2.5) +
+  theme_bw() + 
+  scale_color_viridis(discrete = F , name = "", breaks = c(0, 0.35 , 0.7)) + 
+  facet_wrap(~order , nrow = 2) + 
+  labs(x = "Cell type purity" , y = "# cells from 'perturbed' cell type") + 
+  ggtitle("PGC") + 
+  theme(legend.position = "top")  + 
+  labs(x = "" , y = "") +
+  theme(axis.text=element_text(size=15)) +
+  theme(legend.text=element_text(size=15) , legend.title = element_text(size=15) ) + 
+  theme(text=element_text(size=15) , axis.text.x = element_text(size=13) , axis.text.y = element_text(size=13))
+p1
+
+
+p2 = ggplot(stat[stat$sub_celltype == "Def. endoderm" , ] , aes(x = ct_specificity , y = ct_n_cells , col = frac_hoods_sig_pval)) +
+  geom_point(size=2.5) +
+  theme_bw() + 
+  scale_color_viridis(discrete = F, name = "" , breaks = c(0, 0.5 , 1)) + 
+  facet_wrap(~order , nrow = 2) + 
+  labs(x = "Cell type purity" , y = "# cells from 'perturbed' cell type") + 
+  ggtitle("Def. endoderm") + 
+  theme(legend.position = "top" )  + 
+  labs(x = "" , y = "") +
+  theme(axis.text=element_text(size=15)) +
+  theme(legend.text=element_text(size=15) , legend.title = element_text(size=15) ) + 
+  theme(text=element_text(size=15) , axis.text.x = element_text(size=13) , axis.text.y = element_text(size=13))
+p2
+
+
+
+p3 = ggplot(stat[stat$sub_celltype == "Floor plate" , ] , aes(x = ct_specificity , y = ct_n_cells , col = frac_hoods_sig_pval)) +
+  geom_point(size=2.5) +
+  theme_bw() + 
+  scale_color_viridis(discrete = F, name = "", breaks = c(0, 0.5 , 1)) +  
+  facet_wrap(~order , nrow = 2) + 
+  labs(x = "Cell type purity" , y = "# cells from 'perturbed' cell type") + 
+  ggtitle("Floor plate") + 
+  theme(legend.position = "top") + 
+  labs(x = "" , y = "") +
+  theme(axis.text=element_text(size=15)) +
+  theme(legend.text=element_text(size=15) , legend.title = element_text(size=15) ) + 
+  theme(text=element_text(size=15) , axis.text.x = element_text(size=13) , axis.text.y = element_text(size=13))
+p3
+
+p = ggarrange(p1,p2,p3, ncol = 3)
+p
+ggsave(filename = paste0(figures.dir, "scater_ct_spec_vs_n_cells_ct", ".png"), plot = p, width = 8, height = 4.5)
+
+
+
+
+stat_per_assignment = as.data.frame(stat %>% group_by(sub_celltype ,  order_k  , round) 
+                     %>% dplyr::summarise(max_frac_hoods_sig_pval = max(frac_hoods_sig_pval) ) )
+
+
+ct_spec.thresh = 0
+tab = as.data.frame(stat_ct_specificity %>% group_by(sub_celltype , avg_hood_size , order , k , order_k,  prop , round) %>% dplyr::summarise(n_hoods = sum(ct_specificity > ct_spec.thresh) , max_ct_specificity = max(ct_specificity) , max_ct_inclusion = max(ct_inclusion)))
+tab = merge(tab , stat_ct_specificity_per_coverage , all.x = T)
+tab = merge(tab , stat_per_assignment, by = c("sub_celltype" , "order_k" , "round"))
+
+
+
+p = ggplot(tab , aes(x = avg_hood_size_bin , y = max_frac_hoods_sig_pval , col = order )) +
+  geom_boxplot() + geom_point() +
+  scale_color_manual(values = cols_order , name = "Order") +
+  theme_bw()  + 
+  facet_wrap(~sub_celltype, scales = "free" , ncol = 5) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1 )) +
+  theme(legend.position = "top") + 
+  labs(x = "Average neighbourhood size" , y = "Max DE detection power" ) +
+  theme(axis.text=element_text(size=15)) +
+  theme(legend.text=element_text(size=15) , legend.title = element_text(size=15) ) + 
+  theme(text=element_text(size=15) , axis.text.x = element_text(size=11) , axis.text.y = element_text(size=13))
+p
+ggsave(filename = paste0(figures.dir, "boxplot_max_de_detection", ".png"), plot = p, width = 7, height = 3)
+
+
+
+```
+
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

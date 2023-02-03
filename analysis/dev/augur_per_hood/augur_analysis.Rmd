@@ -1,0 +1,60 @@
+---
+title: "How AUC distribution from Augur-based classifiers depends on DE."
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+```{r load, message = FALSE}
+
+
+library(SingleCellExperiment)
+library(ggplot2)
+library(ggpubr)
+library(MetBrewer)
+
+set.seed(32)
+
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+figures.dir = paste0(root.dir , "figures/hood_selection/simulations/")
+
+cols_lfc = met.brewer("Signac" , n = 14)
+cols_lfc = cols_lfc[c(8,11)]
+
+# load augur stat
+stat_augur = readRDS(paste0(root.dir , "data/processed/hood_selection/stat_augur.Rds"))
+stat_augur$batch = factor(stat_augur$batch, levels = c("no_batch" , "batch_balanced" , "batch_misbalanced"))
+
+
+```
+
+
+# Plot
+
+```{r plot-augur, message = FALSE}
+
+
+p = ggplot(stat_augur , aes(x = factor(de_prob) , y = auc , fill = factor(de_facLoc))) + 
+  geom_boxplot() + 
+  theme_bw() + 
+  scale_fill_manual(values = cols_lfc , name = "de-facLoc") +
+  facet_wrap(~batch) +
+  geom_hline(yintercept = 0.5 , "linetype" = "dashed" , color = "red") + 
+  theme(legend.position = "top") + 
+  labs(x = "DE-prob" , y = "AUC")
+p
+ggsave(filename = paste0(figures.dir, "augur/main_stat" ,".png"), plot = p, width = 8, height = 4)
+
+
+```
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

@@ -1,0 +1,71 @@
+---
+title: "Assign neighbourhoods for simulated data: vary k, order."
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+```{r load, message = FALSE}
+
+
+library(BiocParallel)
+library(miloR)
+library(miloDE)
+library(knitr)
+ncores = 10
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+
+set.seed(32)
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+
+sce = readRDS( paste0(root.dir , "data/processed/order_analysis/sce_chimera_w_simulations.Rds") )
+
+
+```
+
+
+# Set up milo grid
+
+```{r milo-grid, message = FALSE}
+
+
+anno_1 = expand.grid(order = 1, k = c(75,150,200,250,350) , prop = c(0.2) , round = c(1:3))
+anno_2 = expand.grid(order = 2, k = c(seq(10,30,5), 40), prop = c(0.2), round = c(1:3))
+anno = rbind(anno_1 , anno_2)
+
+
+
+```
+
+# Assign neighbourhoods
+
+```{r sce-milo, message = FALSE}
+
+
+
+stat = lapply(21:nrow(anno) , function(i){
+  print(i)
+  current.sce_milo = miloDE::assign_neighbourhoods(sce , k = anno$k[i], prop = anno$prop[i] , order = anno$order[i] , reducedDim_name = "scVI" , filtering = T)
+  print(i)
+  saveRDS(current.sce_milo , file = paste0(root.dir ,  "data/processed/order_analysis/sce_milo/sce_" , "order_" , anno$order[i] , "_k_" , anno$k[i], "_round_", anno$round[i] , ".Rds"))
+  return(NULL)
+})
+
+
+kable(stat)
+
+
+```
+
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

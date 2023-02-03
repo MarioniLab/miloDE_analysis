@@ -1,0 +1,56 @@
+---
+title: "Add milo-DE for macrophages."
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+```{r load, message = FALSE}
+
+
+library(miloDE)
+library(BiocParallel)
+library(miloR)
+
+ncores = 16
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+
+set.seed(32)
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+
+# load sce-milo
+sce_milo = readRDS(paste0(root.dir , "data/processed/lung_macrophages/sce_milo", ".Rds"))
+
+# keep only expressed genes 
+sce_milo = retain_informative_genes(sce_milo)
+
+
+```
+
+# DE testing
+
+
+```{r milo-de, message = FALSE}
+
+
+de_stat = miloDE::de_test_neighbourhoods(sce_milo , sample_id = "donor" , design = ~dataset_origin + disease, 
+                                         covariates = c("dataset_origin" , "disease"), output_type = "data.frame", min_n_cells_per_sample = 3, 
+                                         BPPARAM = mcparam)
+saveRDS(de_stat , file = paste0(root.dir , "data/processed/lung_macrophages/milo_de_stat", ".Rds"))
+
+
+
+```
+
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

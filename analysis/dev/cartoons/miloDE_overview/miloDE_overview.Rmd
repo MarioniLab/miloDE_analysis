@@ -1,0 +1,278 @@
+---
+title: "This pipeline to generate cartoons for milo-DE overview"
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+```{r load, message = FALSE}
+
+
+library(SingleCellExperiment)
+library(miloR)
+library(BiocParallel)
+library(ggplot2)
+library(ggpubr)
+library(geneBasisR)
+library(miloDE)
+library(viridis)
+ncores = 5
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+set.seed(32)
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+figures.dir = paste0(root.dir , "figures/cartoon/milo_de_overview/")
+
+# load sce with embedding
+sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/chimera/mouse_embryo_chimera_tal.Rds"))
+# get either tal1- or WT
+sce = sce[, sce$type == "wt" | sce$tal1 == 0]
+
+
+
+```
+
+We gonna use 'UMAP_scvI' for latent embedding
+
+# Let's delete one CT so it creates a DA
+
+```{r downsample-sce, message = FALSE}
+
+
+# let's downsample slightly to make things easier
+cells = sample(colnames(sce) , 20000)
+sce = sce[, colnames(sce) %in% cells]
+
+# let's delete one sample
+sce = sce[, !sce$sample == 37]
+
+# update sample names
+samples = c("ref_1" , "ref_2" , "ref_3" , "query_1" , "query_2")
+names(samples) = c("17" , "29" , "36" , "chimera_1" , "chimera_2")
+sce$sample = sapply(1:ncol(sce) , function(i) samples[which(stringr::str_detect(sce$sample[i] , names(samples) ))])
+
+#saveRDS(sce , file = paste0(root.dir , "data/processed/4_cartoon/sce.Rds"))
+sce = readRDS(paste0(root.dir , "data/processed/4_cartoon/sce.Rds"))
+
+
+```
+
+# Get independent UMAPs
+
+```{r umaps, message = FALSE}
+
+
+cols_samples = c("gray45" , "gray15" , "gray30", "indianred3" , "indianred1")
+names(cols_samples) = c("ref_1" , "ref_2" , "ref_3" , "query_1" , "query_2")
+
+
+df = cbind(as.data.frame(reducedDim(sce , "UMAP_scVI")) , as.data.frame(colData(sce)))
+# get comparable number of cells per sample
+df = lapply(unique(sce$sample) , function(sample){
+  current.df = df[df$sample == sample , ]
+  n_cells = sample(c(1000 :2000) , 1)
+  n_cells = min(n_cells , nrow(current.df))
+  cells = sample(1:nrow(current.df) , n_cells)
+  current.df = current.df[ cells , ]
+  return(current.df)
+})
+df = do.call(rbind , df)
+
+
+plots = lapply(unique(sce$sample) , function(sample){
+  p = ggplot(df[df$sample == sample , ] , aes(x = V1 , y = V2 , col = sample)) +
+    geom_point(size = 0.1) +
+    theme_bw() +
+    scale_color_manual(values = cols_samples) + 
+    theme(legend.position = "none") + 
+    labs(x = "" , y = "") + 
+    #ggtitle(sample) + 
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+          axis.text.y = element_blank(), axis.ticks.y = element_blank()) +
+    xlim(c(-13,9))
+  print(p)
+  ggsave(filename = paste0(figures.dir, "umaps_per_sample/", sample, ".png"), plot = p, width = 3, height = 3)
+})
+
+
+# umap combined
+re_order = sample(1:nrow(df) , nrow(df))
+df = df[re_order , ]
+p = ggplot(df , aes(x = V1 , y = V2 , col = sample)) +
+  geom_point(size = 0.1) +
+  theme_bw() +
+  theme(legend.position = "none") +
+  scale_color_manual(values = cols_samples) +
+  labs(x = "" , y = "") + 
+    #ggtitle(sample) + 
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+          axis.text.y = element_blank(), axis.ticks.y = element_blank()) +
+  xlim(c(-13,9))
+p
+ggsave(filename = paste0(figures.dir, "umaps_combined", ".png"), plot = p, width = 3, height = 3)
+
+
+
+```
+
+# Asign neighbourhoods
+
+```{r assign-nhoods, message = FALSE}
+
+
+sce_milo = miloDE::assign_neighbourhoods(sce , reducedDim_name = "scVI" , k = 50, prop = 0.05 , order = 2, filtering = F)
+sce_milo_filtered = miloDE::filter_neighbourhoods(sce_milo)
+
+#saveRDS(sce_milo , file = paste0(root.dir , "data/processed/4_cartoon/sce_milo.Rds"))
+#saveRDS(sce_milo_filtered , file = paste0(root.dir , "data/processed/4_cartoon/sce_milo_filtered.Rds"))
+
+
+```
+
+## Plot neighbourhood plots (indexed and empty)
+
+```{r plot-nhoods, message = FALSE}
+
+
+
+sce_milo = readRDS(paste0(root.dir , "data/processed/4_cartoon/sce_milo.Rds"))
+sce_milo_filtered = readRDS(paste0(root.dir , "data/processed/4_cartoon/sce_milo_filtered.Rds"))
+
+
+get_plot = function(sce_milo , color_hoods = F , edge_weight.thresh = 100 , size_range=c(0.5,3) , legend = F){
+  require(igraph)
+  nh_graph <- nhoodGraph(sce_milo)
+  nh_graph <- igraph::delete.edges(nh_graph, which(E(nh_graph)$weight <= edge_weight.thresh)-1)
+  nhoodGraph(sce_milo) = nh_graph
+   
+  if (!color_hoods){
+    dummy.df = data.frame(Nhood = 1:ncol(nhoods(sce_milo)) , SpatialFDR = 1)
+    p = miloR::plotNhoodGraphDA(sce_milo, milo_res = dummy.df , res_column = "Nhood", layout="UMAP_scVI" , size_range = size_range) +
+      theme(legend.position = "none")
+    p
+  }
+  else {
+    dummy.df = data.frame(Nhood = 1:ncol(nhoods(sce_milo)) , SpatialFDR = 0)
+    p = miloR::plotNhoodGraphDA(sce_milo, milo_res = dummy.df , res_column = "Nhood", layout="UMAP_scVI", size_range = size_range) + 
+      scale_fill_viridis(discrete = F , name = "nh") +
+      guides(size=FALSE, width=FALSE ,edge_width=FALSE) +
+      theme(legend.text=element_text(size=15) , legend.title = element_text(size=20)) +
+      theme(legend.position = "right")
+    p
+  }
+  return(p)
+}
+
+
+
+
+
+p = get_plot(sce_milo , edge_weight.thresh = 350 , size_range = c(1,5))
+p
+ggsave(filename = paste0(figures.dir, "milo_plots/sce_milo_no_color", ".png"), plot = p, width = 4, height = 4)
+
+p = get_plot(sce_milo_filtered, edge_weight.thresh = 50 , size_range = c(1,5))
+p
+ggsave(filename = paste0(figures.dir, "milo_plots/sce_milo_filtered_no_color", ".png"), plot = p, width = 4, height = 4)
+
+p = get_plot(sce_milo , color_hoods = T, edge_weight.thresh = 350 , size_range = c(1,5))
+p
+ggsave(filename = paste0(figures.dir, "milo_plots/sce_milo_color", ".png"), plot = p, width = 5, height = 4)
+
+p = get_plot(sce_milo_filtered, color_hoods = T, edge_weight.thresh = 50 , size_range = c(1,5))
+p
+ggsave(filename = paste0(figures.dir, "milo_plots/sce_milo_filtered_color", ".png"), plot = p, width = 5, height = 4)
+
+
+
+```
+
+# Get miloDE stat
+
+```{r get-milo-de, message = FALSE}
+
+
+stat_de = miloDE::de_test_neighbourhoods(sce_milo_filtered , sample_id = "sample" , design = ~type , covariates = "type", BPPARAM = mcparam , output_type = "data.frame" , min_count = 0)
+rowdata = as.data.frame(rowData(sce))
+colnames(rowdata)[colnames(rowdata) == "ENSEMBL"] = "gene"
+stat_de = merge(stat_de , rowdata , all.x = T)
+
+# add cell type annotation
+nhood_stat = miloR::annotateNhoods(x = sce_milo_filtered , da.res = data.frame(Nhood = 1:ncol(nhoods(sce_milo_filtered))) , coldata_col = "celltype")
+stat_de = merge(stat_de , nhood_stat , all.x = T , all.y = F)
+
+#saveRDS(stat_de , file = paste0(root.dir , "data/processed/4_cartoon/milo_de.Rds"))
+stat_de = readRDS(file = paste0(root.dir , "data/processed/4_cartoon/milo_de.Rds"))
+
+
+```
+
+# Tweak some genes for nice viz
+
+```{r representative-genes-plot, message = FALSE}
+
+
+stat_de = readRDS(file = paste0(root.dir , "data/processed/4_cartoon/milo_de.Rds"))
+
+
+stat_per_gene = as.data.frame(stat_de %>% group_by(SYMBOL) %>% dplyr::summarise(n_hoods_sig = sum(pval_corrected_across_nhoods < 0.1 , na.rm = T) , mean_logFC = mean(logFC , na.rm = T)))
+
+# tweak some genes to get visually stimulating patterns
+gene_2_change = "Igbp1"
+celltypes = c("Pharyngeal mesoderm" , "Paraxial mesoderm")
+idx_1 = which(stat_de$SYMBOL == gene_2_change & stat_de$celltype == celltypes[1])
+stat_de$pval_corrected_across_nhoods[idx_1] = 0
+stat_de$logFC[idx_1] = abs(stat_de$logFC[idx_1]) * 4
+idx_2 = which(stat_de$SYMBOL == gene_2_change & stat_de$celltype == celltypes[2])
+stat_de$pval_corrected_across_nhoods[idx_2] = 0
+stat_de$logFC[idx_2] = -1*abs(stat_de$logFC[idx_2]) * 3
+
+
+gene_2_change = "Ddit4"
+celltypes = c("Endothelium" , "Haematoendothelial progenitors")
+idx = which(stat_de$SYMBOL == gene_2_change & stat_de$celltype == celltypes)
+stat_de$pval_corrected_across_nhoods[idx] = 0
+stat_de$logFC[idx] = stat_de$logFC[idx] * 4
+
+
+genes_null = stat_per_gene$SYMBOL[stat_per_gene$n_hoods_sig == 0]
+
+
+gene_2_change = "4930553J12Rik"
+celltypes = c("Forebrain/Midbrain/Hindbrain")
+idx = which(stat_de$SYMBOL == gene_2_change & stat_de$celltype == celltypes)
+stat_de$pval_corrected_across_nhoods[idx] = 0
+stat_de$logFC[idx] <- runif(length(idx), 0.5, 2)
+
+
+gene_2_change = "4930473D10Rik"
+celltypes = c("Forebrain/Midbrain/Hindbrain")
+idx = which(stat_de$SYMBOL == gene_2_change & stat_de$celltype == celltypes)
+stat_de$pval_corrected_across_nhoods[idx] = 0
+stat_de$logFC[idx] <- runif(length(idx), 0.5, 2)
+
+
+genes_2_plot = c("Afp" , "Cbx3" , "Rpgrip1" ,  "Ddit4" , "Igbp1" , "Hipk1" , "4930553J12Rik" , "4930473D10Rik")
+plots = lapply(genes_2_plot , function(gene){
+  ensembl = rowdata$gene[rowdata$SYMBOL == gene]
+  p = miloDE::plot_DE_single_gene(sce_milo_filtered , stat_de , gene = ensembl , layout = "UMAP_scVI" , size_range = c(1,5) , 
+                                  edge_weight.thresh = 50 , set_na_to_0 = TRUE) +
+    guides(size=FALSE, width=FALSE ,edge_width=FALSE) +
+    theme(legend.text=element_text(size=15) , legend.title = element_text(size=20))
+  print(p)
+  ggsave(filename = paste0(figures.dir, "milo_de_plots/", gene, ".png"), plot = p, width = 5, height = 4)
+})
+
+
+
+```
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

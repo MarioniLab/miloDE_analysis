@@ -1,0 +1,110 @@
+---
+title: "Add DA stat for macrophage data."
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+```{r load, message = FALSE}
+
+
+library(miloDE)
+library(BiocParallel)
+library(miloR)
+
+ncores = 8
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+
+set.seed(32)
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+
+# load sce-milo
+sce_milo = readRDS(paste0(root.dir , "data/processed/lung_macrophages/sce_milo", ".Rds"))
+
+# get de
+de_stat = readRDS(paste0(root.dir , "data/processed/lung_macrophages/milo_de_stat", ".Rds"))
+
+
+
+```
+
+# Get milo-DA stat
+
+
+```{r milo-da, message = FALSE}
+
+
+add_da = function(sce_milo , reducedDim_name , sample_id = "sample", condition_id , col_annotate = NULL, covariates = NULL){
+  require(dplyr)
+  require(miloR)
+  coldata <- as.data.frame(colData(sce_milo))
+  sce_milo$condition_id <- as.factor( coldata[, condition_id] )
+  sce_milo$sample_id <- as.factor( coldata[, sample_id] )
+  
+  sce_milo <- countCells(sce_milo, meta.data = as.data.frame(colData(sce_milo)), samples="sample_id")
+  sce_design <- data.frame(colData(sce_milo))[,c("sample_id", "condition_id" , covariates)]
+  sce_design <- distinct(sce_design)
+  rownames(sce_design) <- sce_design$sample_id
+  nhoodCounts(sce_milo) = as.matrix(nhoodCounts(sce_milo) , "dgCMatrix")
+  
+  if (!is.null(covariates)){
+    da_results = tryCatch(
+      {
+        out = testNhoods(sce_milo, design = as.formula( paste("~ ", paste(covariates, collapse="+"),sep = "" , " + condition_id") ) , design.df = sce_design, fdr.weighting = "graph-overlap", reduced.dim = reducedDim_name)
+        
+      },
+      error = function(dummy){
+        out = testNhoods(sce_milo, design = ~ factor(condition_id), design.df = sce_design, fdr.weighting = "graph-overlap", reduced.dim = reducedDim_name)
+        out$logFC = NaN
+        out$logCPM = NaN
+        out[, "F"] = NaN
+        out$PValue = NaN
+        out$FDR = NaN
+        out$SpatialFDR = NaN
+        return(out)
+      }
+    )
+  }
+  else {
+    da_results <- testNhoods(sce_milo, design = ~ factor(condition_id), design.df = sce_design, fdr.weighting = "graph-overlap", reduced.dim = reducedDim_name)
+  }
+  if (!is.null(col_annotate)){
+    da_results = annotateNhoods(sce_milo, da_results, coldata_col = col_annotate)
+  }
+  da_results = da_results[order(da_results$Nhood) , ]
+  return(da_results)
+}
+
+
+
+
+add_stat = function(sce_milo){
+  da_stat = add_da(sce_milo , reducedDim_name = "pca.azimuth", sample_id = "donor", condition_id = "disease" , covariates = c("dataset_origin"))
+  da_stat = da_stat[, c("Nhood" , "logFC" , "PValue" , "SpatialFDR")]
+  colnames(da_stat) = c("Nhood" , "logFC_DA" , "PValue_DA" , "SpatialFDR_DA")
+  # get nhood stat
+  nhood_stat = data.frame(Nhood = 1:ncol(nhoods(sce_milo)) , hood_size = colSums(nhoods(sce_milo)))
+  
+  da_stat = merge(da_stat , nhood_stat)
+  da_stat = da_stat[order(da_stat$Nhood) , ]
+}
+
+
+da_stat = add_stat(sce_milo)
+saveRDS(da_stat , paste0(root.dir , "data/processed/lung_macrophages/milo_da_stat", ".Rds"))
+
+
+```
+
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

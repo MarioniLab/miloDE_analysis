@@ -1,0 +1,542 @@
+---
+title: "Analysis for Tal1- chimeras, blood lineage cells"
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+```{r load, message = FALSE}
+
+
+library(miloDE)
+library(miloR)
+library(BiocParallel)
+library(SingleCellExperiment)
+library(ggplot2)
+library(ggpubr)
+library(viridis)
+library(stringr)
+library(ggbeeswarm)
+library(dplyr)
+
+ncores = 4
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+set.seed(32)
+
+
+#root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+root.dir = "/Users/alsu/Develop/hubmap_metaRef/"
+figures.dir = paste0(root.dir , "figures/chimera_embryo/blood_progenitors/main/")
+#source(paste0(root.dir , "am_hubmapMetaRef/functions/core_functions.R"))
+
+# load sce with embedding
+sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/chimera/mouse_embryo_chimera_tal_only.Rds"))
+sce$celltype = sce$celltype.mapped
+sce$tomato = sapply(sce$tomato , function(x) ifelse(isTRUE(x) , "Tal1-" , "Tal1+"))
+sce$tomato = factor(sce$tomato , levels = c("Tal1+" , "Tal1-"))
+# restrict to blood lineage celltypes
+celltypes = c("Haematoendothelial progenitors" , "Endothelium" , paste("Blood progenitors" , c(1,2)) , paste0("Erythroid" , c(1:3)))
+sce = sce[, sce$celltype %in% celltypes]
+# retain informative (expressed) genes - saves memory/time
+sce = geneBasisR::retain_informative_genes(sce)
+
+# update symbols to be unique
+rowdata = as.data.frame(rowData(sce))
+tab = table(rowdata$SYMBOL)
+genes_not_unq = names(tab)[tab > 1]
+rowdata$SYMBOL_unq = rowdata$SYMBOL
+idx = which(rowdata$SYMBOL_unq %in% genes_not_unq)
+rowdata$SYMBOL_unq[idx] = paste0(rowdata$ENSEMBL[idx] , "_" , rowdata$SYMBOL[idx])
+rownames(sce) = rowdata$SYMBOL_unq
+
+
+```
+
+
+
+# UMAPs, colored by CT
+
+Blood and blood related cells
+
+```{r umaps-and-da-blood-related, message = FALSE}
+
+
+umaps = cbind( as.data.frame(reducedDim(sce , "UMAP")) , as.data.frame(colData(sce)))
+
+# update cell type names for plotting
+umaps$celltype[umaps$celltype %in% paste0("Erythroid" , c(1,2,3))] = "Erythroid"
+umaps$celltype[umaps$celltype %in% paste0("Blood progenitors " , c(1,2))] = "Blood progenitors (BPs)"
+umaps$celltype[umaps$celltype == "Endothelium"] = "Endothelium (Endo)"
+umaps$celltype[umaps$celltype == "Haematoendothelial progenitors"] = "Haematoendothelial \nprogenitors (HPs)"
+
+
+# add cols
+cols_ct = c("#C72228" , "#F79083" , "#efc86e" , "aquamarine3")
+names(cols_ct) = c("Erythroid" , "Blood progenitors (BPs)" , "Endothelium (Endo)" , "Haematoendothelial \nprogenitors (HPs)")
+
+
+p = ggplot(umaps , aes(x = umap_1 , y = umap_2 , col = celltype)) + 
+  geom_point() + 
+  scale_color_manual(values = cols_ct, name = "Cell type") + 
+  theme_bw() +
+  theme(legend.position = "left") + 
+  facet_wrap(~tomato) +
+  labs(x = "" , y = "") +
+  xlim(c(-1 , 15)) + ylim(c(-10 , 7)) + 
+  theme(legend.position = "right" , legend.text=element_text(size=14)) +
+  theme(strip.text = element_text(size = 14) , legend.title=element_text(size=14))
+p
+ggsave(filename = paste0(figures.dir, "umaps_w_cts", ".png"), plot = p, width = 7, height = 3)
+
+
+
+```
+
+## Assign nhoods
+
+Run once
+
+```{r assign nhoods, message = FALSE}
+
+
+celltypes = c("Endothelium" , "Haematoendothelial progenitors")
+
+set.seed(15)
+sce_milo = assign_neighbourhoods(sce[, sce$celltype %in% celltypes] , reducedDim_name = "pca.corrected" , k = 20, prop = 0.25 , order = 2, filtering = T)
+# update ct names
+sce_milo$celltype[sce_milo$celltype == "Haematoendothelial progenitors"] = "HPs"
+sce_milo$celltype[sce_milo$celltype == "Endothelium"] = "Endo"
+
+#saveRDS(sce_milo  , file = paste0(root.dir , "data/processed/chimera_tal1/sce_milo_blood_lineage.Rds"))
+
+sce_milo = readRDS(paste0(root.dir , "data/processed/chimera_tal1/sce_milo_blood_lineage.Rds"))
+
+
+```
+
+
+# Add some statistics on nhoods
+
+## Distance to blood
+
+```{r dist-to-blood, message = FALSE}
+
+
+
+add_distance_to_blood = function(sce , sce_milo){
+  cells_milo = sce$cell[sce$celltype %in% c( "Endothelium", "Haematoendothelial progenitors")]
+  cells_blood =  sce$cell[sce$celltype %in% c( "Blood progenitors 1", "Blood progenitors 2")]
+  
+  pcs = reducedDim(sce[, sce$cell %in% c(cells_milo, cells_blood)] , "pca.corrected")
+  my_dist = as.matrix( dist(pcs) )
+  my_dist = my_dist[rownames(my_dist) %in% cells_milo , colnames(my_dist) %in% cells_blood]
+  rownames_my_dist = rownames(my_dist)
+  my_dist = sapply(1:nrow(my_dist) , function(i) return(min(my_dist[i , ])))
+  names(my_dist) = rownames_my_dist
+  
+  nhoods_sce = nhoods(sce_milo)
+  stat = lapply(1:ncol(nhoods_sce) , function(i){
+    cells = rownames(nhoods_sce)[which(nhoods_sce[, i] == 1)]
+    out = data.frame(dist_2_blood = mean(my_dist[names(my_dist) %in% cells]))
+    return(out)
+  })
+  stat = do.call(rbind , stat)
+  stat$Nhood = 1:ncol(nhoods_sce) 
+  return(stat)
+}
+
+
+dist_stat = add_distance_to_blood(sce , sce_milo)
+
+
+```
+
+## Add DA and enriched cell type
+
+```{r add-da, message = FALSE}
+
+
+add_da = function(sce_milo , reducedDim_name = "pca.corrected" , col_annotate){
+  require(dplyr)
+  require(miloR)
+  sce_milo <- countCells(sce_milo, meta.data = as.data.frame(colData(sce_milo)), samples="sample")
+  sce_design <- data.frame(colData(sce_milo))[,c("sample", "tomato")]
+  sce_design <- distinct(sce_design)
+  rownames(sce_design) <- sce_design$sample
+  nhoodCounts(sce_milo) = as.matrix(nhoodCounts(sce_milo) , "dgCMatrix")
+  da_results <- testNhoods(sce_milo, design = ~ factor(tomato), design.df = sce_design, fdr.weighting = "graph-overlap", reduced.dim = reducedDim_name)
+  if (!is.null(col_annotate)){
+    da_results = annotateNhoods(sce_milo, da_results, coldata_col = col_annotate)
+  }
+  da_results = da_results[order(da_results$Nhood) , ]
+  return(da_results)
+}
+
+
+da_stat = add_da(sce_milo , col_annotate = "celltype")
+
+
+```
+
+## Neighbourhood plots, coloured by diff statistics
+
+```{r plot-nhood-stat, message = FALSE}
+
+
+cols_ct = c("#efc86e" , "aquamarine3")
+names(cols_ct) = c("Endo" , "HPs")
+
+
+# colored by CT
+p1 = plot_milo_by_single_metric(sce_milo , nhood_stat = da_stat , colour_by = "celltype" , size_range = c(2,5)) + 
+  scale_fill_manual(values = cols_ct , name = "Cell\ntype") +
+  guides(size=FALSE, width=FALSE ,edge_width=FALSE) +
+  theme(legend.position = "top")
+# colored by DA
+p2 = plot_milo_by_single_metric(sce_milo , nhood_stat = da_stat , colour_by = "logFC" , significance_by = "SpatialFDR", alpha = 0.1, size_range = c(2,5)) + 
+  scale_fill_gradient2(low = "palegreen4" , high = "mediumorchid4" , midpoint = 0, mid = "white" , name = "logFC,\nDA") +
+  guides(size=FALSE, width=FALSE ,edge_width=FALSE) +
+  theme(legend.position = "top")
+# colored by distance to blood
+p3 = plot_milo_by_single_metric(sce_milo , nhood_stat = dist_stat , colour_by = "dist_2_blood", size_range = c(2,5)) + 
+  scale_fill_viridis(discrete = F , name = "Dist. to \n BPs" , option = "inferno") +
+  guides(size=FALSE, width=FALSE ,edge_width=FALSE) +
+  theme(legend.position = "top")
+
+p = ggarrange(p1,p2,p3 , ncol = 3)
+p
+ggsave(filename = paste0(figures.dir, "nhood_stat", ".png"), plot = p, width = 7, height = 3)
+
+
+
+```
+
+# miloDE
+
+```{r get-milo-de, message = FALSE}
+
+
+de_stat = de_test_neighbourhoods(sce_milo , design = ~tomato , covariates = "tomato" , min_n_cells_per_sample = 3 , BPPARAM = mcparam , output_type = "data.frame")
+
+# add da_stat, dist_stat
+de_stat = merge(de_stat , dist_stat , all.x = T , all.y = F)
+da_stat = da_stat[, c("Nhood" , "logFC" , "PValue" , "SpatialFDR" , "celltype")]
+colnames(da_stat) = c("Nhood" , "logFC_DA" , "PValue_DA" , "SpatialFDR_DA" , "celltype")
+de_stat = merge(de_stat , da_stat , all.x= T , all.y = F)
+
+#saveRDS(de_stat  , file = paste0(root.dir , "data/processed/chimera_tal1/de_stat_blood_lineage.Rds"))
+de_stat = readRDS(file = paste0(root.dir , "data/processed/chimera_tal1/de_stat_blood_lineage.Rds"))
+
+
+```
+
+## Get stat per gene: nhoods-sig & corr w dist
+
+```{r get_stat_per_gene, message = FALSE}
+
+
+# to calc corr, lets assign 0s instead of NaNs
+de_stat$logFC[is.na(de_stat$logFC)] = 0
+de_stat$pval[is.na(de_stat$pval)] = 1
+de_stat$pval_corrected_across_genes[is.na(de_stat$pval_corrected_across_genes)] = 1
+de_stat$pval_corrected_across_nhoods[is.na(de_stat$pval_corrected_across_nhoods)] = 1
+  
+
+de_stat_per_gene = as.data.frame(de_stat %>% group_by(gene) %>% dplyr::summarise(n_hoods_sig = sum(pval_corrected_across_nhoods < 0.1 , na.rm = T) , corr_w_dist = cor(logFC , dist_2_blood , method = "pearson")))
+
+
+```
+
+# Co-regulated modules
+
+## Find modules
+
+```{r co-reg-modules, message = FALSE}
+
+
+get_wgcna_modules = function(de_stat , de_stat_per_gene , n_hoods_sig.thresh = 2 ,
+                             npcs = 5 ,
+                             pval.thresh = 0.1 ){
+  require(scWGCNA)
+  require(Seurat)
+  require(dplyr)
+  require(reshape2)
+  
+  set.seed(32)
+  # focus on genes that are DE in at least 2 nhoods
+  genes = de_stat_per_gene$gene[de_stat_per_gene$n_hoods_sig >= n_hoods_sig.thresh]
+  de_stat = de_stat[de_stat$gene %in% genes , ]
+  de_stat = de_stat[order(de_stat$Nhood) , ]
+  
+  # for this analysis, set logFC to 0 and pvals to 1 if they are NaN
+  de_stat$logFC[is.na(de_stat$logFC)] = 0
+  de_stat$pval[is.na(de_stat$pval)] = 1
+  de_stat$pval_corrected_across_genes[is.na(de_stat$pval_corrected_across_genes)] = 1
+  de_stat$pval_corrected_across_nhoods[is.na(de_stat$pval_corrected_across_nhoods)] = 1
+  
+  # set logFC to 0 if pval_corrected_across_nhoods > pval.thresh
+  de_stat$logFC[de_stat$pval_corrected_across_nhoods >= pval.thresh] = 0
+  
+  # move the object to Seurat
+  de_stat = reshape2::dcast(data = de_stat, formula = gene~Nhood, value.var = "logFC")
+  rownames(de_stat) = de_stat$gene
+  de_stat = de_stat[,2:ncol(de_stat)]
+  
+  obj.seurat <- CreateSeuratObject(counts = de_stat)
+  DefaultAssay(obj.seurat) <- "RNA"
+  obj.seurat = FindVariableFeatures(obj.seurat)
+  # scale
+  obj.seurat[["RNA"]]@scale.data = as.matrix(obj.seurat[["RNA"]]@data)
+  obj.seurat = Seurat::RunPCA(obj.seurat , npcs = npcs)
+  
+  # run scwgcna
+  clusters_scwgcna = run.scWGCNA(p.cells = obj.seurat, 
+                                 s.cells = obj.seurat, 
+                                 is.pseudocell = F, 
+                                 features = rownames(obj.seurat),
+                                 less = TRUE , merging = TRUE)
+  # compile stat
+  clusters = lapply(1:length(clusters_scwgcna$module.genes) , function(i){
+    out = data.frame(cluster = i , gene = clusters_scwgcna$module.genes[[i]] , n_genes = length(clusters_scwgcna$module.genes[[i]]))
+    return(out)
+  })
+  clusters = do.call(rbind , clusters)
+  # add colors
+  genes_w_colors = clusters_scwgcna$dynamicCols
+  genes_w_colors = data.frame(gene = names(genes_w_colors) , cluster_color = genes_w_colors)
+  clusters = merge(clusters , genes_w_colors)
+  return(clusters)
+}
+
+modules_wgcna = suppressMessages(get_wgcna_modules(de_stat, de_stat_per_gene , n_hoods_sig.thresh = 2))
+# rearrange modules in the descending order
+tab = sort(table(modules_wgcna$cluster) , decreasing = T)
+tab = data.frame(cluster = c(1:length(tab)) , cluster_old = names(tab))
+colnames(modules_wgcna)[colnames(modules_wgcna) == "cluster"] = "cluster_old"
+modules_wgcna = merge(modules_wgcna , tab , all.x = T)
+# add n-hoods-sig & corr-dist-2-blood
+modules_wgcna = merge(modules_wgcna, de_stat_per_gene, by = "gene" , all.x = T , all.y = F)
+modules_wgcna$cluster = factor(modules_wgcna$cluster , levels = sort(unique(modules_wgcna$cluster)))
+saveRDS(modules_wgcna  , file = paste0(root.dir , "data/processed/chimera_tal1/gene_modules_scwgcna.Rds"))
+
+#modules_wgcna = readRDS(paste0(root.dir , "data/processed/chimera_tal1/gene_modules_scwgcna.Rds"))
+
+
+```
+
+## Quantitave stat on modules
+
+```{r stat-gene-modules, message = FALSE}
+
+
+n_hoods_total = ncol(nhoods(sce_milo))
+
+cols_modules = MetBrewer::met.brewer("Homer2" , n = length(levels(modules_wgcna$cluster)))
+tab = as.data.frame(table(modules_wgcna$cluster))
+colnames(tab) = c("module" , "n_genes")
+
+p1 = ggplot(tab , aes(x = factor(module) , y = n_genes , fill = factor(module))) +
+  geom_bar(stat = "identity" , position = "dodge") +
+  theme_bw() +
+  scale_fill_manual(values = cols_modules) +
+  theme(legend.position = "none") +
+  labs(x = "Gene module" , y = "Number of genes") +
+  theme(text = element_text(size = 14)) 
+p2 = ggplot(modules_wgcna , aes(x = factor(cluster) , y = n_hoods_sig/n_hoods_total, col = factor(cluster) )) +
+  geom_boxplot() + geom_jitter(width = 0.1 , size = .75) +
+  theme_bw() +
+  theme(legend.position = "none") +
+  labs(x = "Gene module" , y = "Fraction of \n significant hoods") +
+  scale_color_manual(values = cols_modules) +
+  theme(text = element_text(size = 14)) 
+p3 = ggplot(modules_wgcna , aes(x = factor(cluster) , y = corr_w_dist , col = factor(cluster) )) +
+  geom_boxplot() + geom_jitter(width = 0.1 , size = .75) +
+  theme_bw() +
+  theme(legend.position = "none") +
+  labs(x = "Gene module" , y = "Corr w/ distance to \n blood progenitors") +
+  scale_color_manual(values = cols_modules) +
+  theme(text = element_text(size = 14)) 
+p = ggarrange(p1,p2,p3)
+p
+ggsave(filename = paste0(figures.dir, "gene_modules/", "stat", ".png"), plot = p, width = 6, height = 5)
+
+
+
+```
+
+## Neighbourhood 'spaial' plots
+
+```{r neighbourhood-plot-per-cluster, message = FALSE}
+
+
+plots = lapply(sort(unique(modules_wgcna$cluster)) , function(cluster){
+  genes = modules_wgcna$gene[modules_wgcna$cluster == cluster]
+  p = plot_DE_gene_set(sce_milo , de_stat = de_stat , genes = genes , size_range = c(0.5 , 5)) + 
+    scale_fill_gradient2(name = "avg logFC") + scale_size(range = c(0.5 , 5), name="Fraction of\nsignificantly\nDE genes") + 
+    ggtitle(paste0("Module #" , cluster , ", ", length(genes), " genes"))
+  print(p)
+  ggsave(filename = paste0(figures.dir, "gene_modules/spatial/", cluster, ".png"), plot = p, width = 5, height = 5)
+})
+
+
+
+```
+
+## Break down by CTs
+
+```{r break-down-by-CTs, message = FALSE}
+
+
+modules_wgcna$cluster_name = paste0("Module #" , modules_wgcna$cluster)
+modules_wgcna$cluster_name = factor(modules_wgcna$cluster_name , levels = paste0("Module #",levels(modules_wgcna$cluster)))
+
+
+plots = lapply(levels(modules_wgcna$cluster_name) , function(cluster_name){
+  genes = modules_wgcna$gene[modules_wgcna$cluster_name == cluster_name]
+  p = plot_beeswarm_gene_set(de_stat , genes = genes , nhoodGroup = "celltype" , size = 3.5) + 
+    scale_color_gradient2(breaks = c(-2,-1,0,1,2) , limits = c(-2.2,2.2) , name = "avg logFC") + 
+    geom_quasirandom(alpha = 1 , size = 3.5 , shape = 1 , colour = "black") +
+    ylim(c(0,1)) + 
+    labs(x = "",y = "") +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+    theme(axis.text.y = element_text(face="bold", colour = cols_ct, size=12)) + 
+    ggtitle(cluster_name)
+  return(p)
+})
+p = ggarrange(plotlist = plots , common.legend = T , nrow = 2 , ncol=4)
+p
+ggsave(filename = paste0(figures.dir, "gene_modules/break_down_cts", ".png"), plot = p, width = 7, height = 4)
+
+
+
+```
+
+# GO
+
+```{r gos, message = FALSE}
+
+
+get_go_terms = function(genes , pval.thresh = 0.1){
+  require(enrichR)
+  require(stringr)
+  gos <- as.data.frame( enrichr(genes, 'GO_Biological_Process_2021')[[1]] )
+  gos$n_tested_genes = length(genes)
+  gos$n_detected_genes_in_go = NaN
+  gos$n_total_genes_in_go = NaN  
+  
+  gos$Term_id = NaN
+  for (i in 1:nrow(gos)){
+    current.overlap = gos$Overlap[i]
+    current.overlap = str_split(current.overlap, "/")
+    gos$n_detected_genes_in_go[i] = as.numeric(current.overlap[[1]][1])
+    gos$n_total_genes_in_go[i] = as.numeric(current.overlap[[1]][2])
+    
+    current.go = gos$Term[i]
+    current.go = str_split(current.go, "GO:")
+    gos$Term[i] = substring(current.go[[1]][1], 1, nchar(current.go[[1]][1])-2)
+    gos$Term_id[i] = substring(current.go[[1]][2], 1, nchar(current.go[[1]][2])-1)
+  }
+  gos = gos[gos$Adjusted.P.value < pval.thresh, ]
+  return(gos)
+}
+
+
+# look at enriched GOs
+plots = lapply(levels(modules_wgcna$cluster) , function(cluster){
+  print(cluster)
+  gos = get_go_terms(modules_wgcna$gene[modules_wgcna$cluster == cluster] )
+  write.csv(gos, paste0(root.dir , "supp_tables/tal1/module_" , cluster , ".csv"), row.names=FALSE, quote=FALSE) 
+  
+  if (nrow(gos) > 0){
+    p = plotEnrich(gos , numChar = 80) +
+      ggtitle(cluster)
+    print(p)
+  }
+})
+
+
+```
+
+
+## Examples of genes from relevant modules
+
+### Gene set 1
+
+```{r umaps-gene-set-1, message = FALSE}
+
+
+
+cluster = 1
+gos = get_go_terms(modules_wgcna$gene[modules_wgcna$cluster == cluster] )
+
+genes_cluster_1_selected = c("Itga2b" , "Hmox1", "Rras" , "Npr1" , "Rhob" , "Ldb2" , "Dpysl3", "Bst2")
+
+plot_umap_w_counts = function(gene , sce_milo , umap_name = "UMAP" , size = 0.75){
+  umaps = cbind( as.data.frame(reducedDim(sce_milo , umap_name)) , as.data.frame(colData(sce_milo)))
+  umaps$counts = as.numeric(logcounts(sce_milo[gene , ]))
+  umaps = umaps[order(umaps$counts) , ]
+  p = ggplot(umaps , aes(x = umap_1 , y = umap_2 , col = counts)) +
+    geom_point(size=size) +
+    scale_color_viridis(discrete = F) +
+    theme_bw() +
+    facet_wrap(~tomato) +
+    xlim(c(min(umaps$umap_1) , max(umaps$umap_1))) + ylim(c(min(umaps$umap_2) , max(umaps$umap_2))) +
+    xlim(c(-2,12)) + ylim(c(-10,0)) +
+    ggtitle(gene)
+  return(p)
+}
+
+
+plots = lapply(genes_cluster_1_selected, function(gene){
+  print(gene)
+  p = plot_umap_w_counts(gene , sce[, sce$celltype %in% c("Endothelium", "Haematoendothelial progenitors" , "Blood progenitors 1", "Blood progenitors 2")] , size = .75) + 
+    labs(x = "" , y = "") +
+    theme(legend.position = "top") 
+  return(p)
+})
+p = ggarrange(plotlist = plots , nrow = 2 , ncol = 4)
+p
+ggsave(filename = paste0(figures.dir, "gene_modules/example_umaps/", 1, ".png"), plot = p, width = 10, height = 5)
+
+
+
+
+```
+
+### Gene set 2
+
+```{r umaps-gene-set-2, message = FALSE}
+
+
+cluster = 2
+gos = get_go_terms(modules_wgcna$gene[modules_wgcna$cluster == cluster] )
+
+genes_cluster_2_selected = c("Tnnt2" , "Tnni1" , "Bmp5" , "Nkx2-5" , "Fbn1" , "Myh7" , "Popdc2" , "Gata5" )
+
+
+
+plots = lapply(genes_cluster_2_selected, function(gene){
+  print(gene)
+  p = plot_umap_w_counts(gene , sce[, sce$celltype %in% c("Endothelium", "Haematoendothelial progenitors" , "Blood progenitors 1", "Blood progenitors 2")] , size = .75) + 
+    labs(x = "" , y = "") +
+    theme(legend.position = "top") 
+  return(p)
+})
+p = ggarrange(plotlist = plots , nrow = 2 , ncol = 4)
+p
+ggsave(filename = paste0(figures.dir, "gene_modules/example_umaps/", 2, ".png"), plot = p, width = 10, height = 5)
+
+
+```
+
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

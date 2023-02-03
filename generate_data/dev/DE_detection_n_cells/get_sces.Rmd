@@ -1,0 +1,297 @@
+---
+title: "Generate subsamplings from simulated data to work out how DE detection depends on n-cells."
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+
+```{r load, message = FALSE}
+
+
+library(SingleCellExperiment)
+library(batchelor)
+library(stats)
+library(Matrix)
+library(splatter)
+library(BiocParallel)
+library(BiocNeighbors)
+library(BiocSingular)
+library(pROC)
+library(ggplot2)
+library(ggpubr)
+library(scuttle)
+
+ncores = 20
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+
+set.seed(32)
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+
+
+```
+
+
+# Download reference data for param estimation
+
+```{r param-estimate, message = FALSE}
+
+
+sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/WT/mouse_embryo_E8.5.Rds"))
+# filter the data for param estimation
+sce = sce[, sce$sample == 17]
+sce = scuttle::logNormCounts(sce)
+sce = geneBasisR::retain_informative_genes(sce , n = 4000)
+counts(sce) = as.matrix(counts(sce))
+
+# param estimation
+params = splatEstimate( sce )
+
+
+```
+
+
+# Get big ds (from which we subsample all others)
+
+```{r get-big-ds, message = FALSE}
+
+
+lfc.grid = c(0.5, 1 , 2 , 3)
+
+sims_main = lapply(lfc.grid , function(lfc){
+  sim = splatSimulateGroups(params , group.prob = c(0.5,0.5) , de.prob = c(0.25,0) ,
+                          batchCells = rep(15000,1,10) , de.facLoc = lfc, batch.rmEffect = T, verbose = F)
+  sim$sample = paste0(sim$Batch , "_" , sim$Group)
+  sim = SingleCellExperiment(list(counts = counts(sim)),
+                           colData = colData(sim),
+                           rowData = rowData(sim) )
+  return(sim)
+})
+saveRDS(sims_main , file = paste0(root.dir , "data/processed/DE_detection_n_cells/sims_main.Rds"))
+
+# get rowdata
+rowdata = lapply(1:length(sims_main) , function(i){
+  sim_main = sims_main[[i]]
+  out = as.data.frame(rowData(sim_main))
+  out$gene_de_sim = as.numeric(!out$DEFacGroup1 == 1)
+  out$DEFac_abs = sapply(1:nrow(out) , function(i){
+    return(max(out$DEFacGroup1[i] , 1/out$DEFacGroup1[i]))
+  })
+  out$DEFac_sign = ifelse( out$DEFacGroup1 < 1 , "neg" , "pos")
+  return(out)
+})
+saveRDS(rowdata , file = paste0(root.dir , "data/processed/DE_detection_n_cells/rowdata.Rds"))
+
+
+```
+
+# DE for all ds
+
+```{r get-big-ds-de, message = FALSE}
+
+
+get_de_genes_bulk = function(sce , id = "id"){
+  require(tibble)
+  require(edgeR)
+  summed = summarizeAssayByGroup(counts(sce), colData(sce)[,c("sample",id)])
+  y <- DGEList(assay(summed, "sum"), samples=colData(summed), lib.size = colSums(assay(summed , "sum")))
+  y <- calcNormFactors(y)
+  colnames(y$samples)[colnames(y$samples) == id] = "id"
+  design <- model.matrix(~ factor(id), y$samples)
+  y <- estimateDisp(y, design)
+  fit <- glmQLFit(y, design, robust=TRUE)
+  res <- glmQLFTest(fit, coef=ncol(design))
+  out = topTags(res, n = Inf )
+  out = as.data.frame(out)
+  out = rownames_to_column(out , var = "Gene")
+  return(out)
+}      
+
+
+de_main = lapply(1:length(sims_main) , function(i){
+  sim_main = sims_main[[i]]
+  out = get_de_genes_bulk(sim_main , id = "Group")
+  colnames(out)[colnames(out) == "PValue"] = "PValue_all"
+  return(out)
+})
+saveRDS(de_main , file = paste0(root.dir , "data/processed/DE_detection_n_cells/de_main.Rds"))
+
+
+```
+
+
+# Get sub datasets
+
+```{r get-sub-ds, message = FALSE}
+
+
+
+get_detection_stat = function(category , response , response.thresh = 0.1){
+  require(pROC)
+  roc = suppressMessages(roc(category , response))
+  auc = as.numeric(roc$auc)
+  
+  response = response <= response.thresh
+  fp = sum(category == 0 & response == 1)
+  fn = sum(category == 1 & response == 0)
+  tp = sum(category == 1 & response == 1)
+  tn = sum(category == 0 & response == 0)
+  sensitivity = tp/(tp + fn)
+  specificity = tn/(tn + fp)
+  fdr = fp/(fp + tp)
+  fomr = fn/(fn + tn)
+  out = data.frame(auc = auc , sensitivity = sensitivity , specificity = specificity , fdr = fdr , fomr = fomr)
+  return(out)
+}
+
+
+get_sample_selection = function(samples , n_samples){
+  samples = sort( sample(samples , n_samples) )
+  return(samples)
+}
+
+
+downsample_big_ds = function(sim_main , n_samples_ref , n_samples_query){
+  samples_query = get_sample_selection( unique( sim_main$sample[sim_main$Group == "Group1"]) , n_samples_query )
+  samples_ref = get_sample_selection( unique( sim_main$sample[sim_main$Group == "Group2"]) , n_samples_ref )
+  current.sim = sim_main[ , sim_main$sample %in% c(samples_query, samples_ref)]
+  return(current.sim)
+}
+
+
+get_de_stat = function(de , de_ref = de_bulk_main, rowdata , PValue.thresh = 0.05){
+  de = merge(de , rowdata[, c("Gene" , "gene_de_sim")])
+  de = merge(de , de_ref[, c("Gene", "PValue_all")])
+  out_all = get_detection_stat(de$gene_de_sim , de$PValue , response.thresh = PValue.thresh)
+  colnames(out_all) = paste0(c("auc", "sensitivity" , "specificity" , "fdr" , "fomr") , "_all")
+  out_rel = get_detection_stat(de$PValue_all <= PValue.thresh, de$PValue , response.thresh = PValue.thresh)
+  colnames(out_rel) = paste0(c("auc", "sensitivity" , "specificity" , "fdr" , "fomr") , "_relative")
+  out = cbind(out_all , out_rel)
+  return(out)
+}
+
+
+# generate subsampled datasets from big main sim
+anno = expand.grid(n_samples_ref = c(2,6,10) , 
+                   n_samples_query = c(2,6,10) , sim.idx = c(1:length(sims_main)))
+
+
+sims = bplapply(1:nrow(anno) , function(i){
+  idx = anno$sim.idx[i]
+  out = downsample_big_ds(sims_main[[idx]] , anno$n_samples_ref[i] , anno$n_samples_query[i])
+  return(out)
+}, BPPARAM = mcparam)
+saveRDS(sims , file = paste0(root.dir , "data/processed/DE_detection_n_cells/sims.Rds"))
+
+
+sims_de = bplapply(1:nrow(anno) , function(i){
+  idx = anno$sim.idx[i]
+  out = get_de_genes_bulk(sims[[i]] , id = "Group")
+  current.rowdata = rowdata[[idx]]
+  out = merge(out , current.rowdata[, c("Gene", "gene_de_sim")])
+  return(out)
+}, BPPARAM = mcparam)
+saveRDS(sims_de , file = paste0(root.dir , "data/processed/DE_detection_n_cells/sims_de.Rds"))
+
+
+# get sample composition
+tab_all = lapply(1:length(sims_main) , function(i){
+  out = as.data.frame(table(sims_main[[i]]$sample))
+  colnames(out) = c("sample" , "n_all")
+  out$sim.idx = i
+  return(out)
+})
+tab_all = do.call(rbind , tab_all)
+
+
+sims_stat = lapply(1:nrow(anno) , function(i){
+  tab = as.data.frame(table(sims[[i]]$sample))
+  colnames(tab) = c("sample" , "n")
+  tab$sim.idx = anno$sim.idx[i]
+  tab = merge(tab_all[tab_all$sim.idx == anno$sim.idx[i] , ] , tab , all.x = T , by = c("sample" , "sim.idx"))
+  tab[is.na(tab)] = 0
+  tab = tab[order(tab$sample) , ]
+  samples = tab$sample
+  tab = as.data.frame(t(tab[ , "n"]))
+  colnames(tab) = samples
+  de_bulk_main = de_main[[anno$sim.idx[i]]]
+  current.rowdata = rowdata[[anno$sim.idx[i]]]
+  tab = cbind(tab , get_de_stat(sims_de[[i]] , de_bulk_main , current.rowdata) )
+  tab$idx = i
+  tab$sim.idx = anno$sim.idx[i]
+  return(tab)
+})
+sims_stat = do.call(rbind , sims_stat)
+saveRDS(sims_stat , file = paste0(root.dir , "data/processed/DE_detection_n_cells/de_stat_sims.Rds"))
+
+
+```
+
+# For each dataset - do subsampling
+
+```{r get-downsampling-stat, message = FALSE}
+
+
+K_downsampling = 2000
+max.n_cells = 3000
+
+stat_downsampling = lapply(1:nrow(anno) , function(i){
+  sim = sims[[i]]
+  de = sims_de[[i]]
+  sim.idx = anno$sim.idx[i]
+  current.rowdata = rowdata[[sim.idx]]
+  de_bulk_main = de_main[[sim.idx]]
+  colnames(de)[colnames(de) == "PValue"] = "PValue_all"
+  n_max = min(max.n_cells , ncol(sim))
+  stat_per_ds = bplapply(1:K_downsampling , function(j){
+    n = sample(c(50:n_max), 1)
+    current.sim = sim[, sample(colnames(sim) , n)]
+    current.stat = tryCatch(
+      {
+        current.de = get_de_genes_bulk(current.sim, "id" = "Group")
+        # composition
+        tab = as.data.frame(table(current.sim$sample))
+        colnames(tab) = c("sample" , "n")
+        tab = merge(tab_all[tab_all$sim.idx == sim.idx , ] , tab , all.x = T)
+        tab[is.na(tab)] = 0
+        tab = tab[order(tab$sample) , ]
+        samples = tab$sample
+        tab = as.data.frame(t(tab[ , "n"]))
+        colnames(tab) = samples
+        
+        tab = cbind(tab , get_de_stat(current.de , de_ref = de_bulk_main , current.rowdata))
+        tab$n_samples_ref = anno$n_samples_ref[i]
+        tab$n_samples_query = anno$n_samples_query[i]
+        tab$lfc = lfc.grid[sim.idx]
+        tab$downsampling = j
+        tab$n_cells_downsampled = n
+        tab
+      },
+      error = function(dummy){
+        message("Too low numbers to do de")
+        return(NULL)
+      }
+    )
+    return(current.stat)
+  } , BPPARAM = mcparam)
+  stat_per_ds = do.call(rbind , stat_per_ds)  
+  return(stat_per_ds)
+})
+stat_downsampling = do.call(rbind , stat_downsampling)
+saveRDS(stat_downsampling , file = paste0(root.dir , "data/processed/DE_detection_n_cells/de_stat_downsampling.Rds"))
+
+
+
+```
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

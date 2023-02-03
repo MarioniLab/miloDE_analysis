@@ -1,0 +1,83 @@
+---
+title: "Generate data foe the simulation cartton (single gene)."
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+```{r load, message = FALSE}
+
+
+library(SingleCellExperiment)
+library(miloDE)
+library(miloR)
+library(ggplot2)
+library(ggpubr)
+library(viridis)
+library(MetBrewer)
+library(dplyr)
+library(BiocParallel)
+
+ncores = 13
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+
+set.seed(32)
+
+#root.dir = "/Users/alsu/Develop/hubmap_metaRef/"
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+
+
+```
+
+# Load data
+
+```{r load-data, message = FALSE}
+
+
+# sort out sub-celltypes
+sce = readRDS(paste0(root.dir , "data/processed/simulations/sce_chimera_w_simulations.Rds"))
+sce_original = readRDS(paste0(root.dir , "data/sces/mouse_embryo/chimera/mouse_embryo_chimera_tal.Rds"))
+# subselect
+sce_original = sce_original[, sce_original$tal1 == 1]
+sce_original = sce_original[, order(colnames(sce_original))]
+sce = sce[, order(colnames(sce))]
+reducedDim(sce_original , "UMAP_scVI") = reducedDim(sce , "UMAP_scVI")
+
+sub_ct = "Floor plate"
+
+
+```
+
+# Assign neighbourhoods
+
+```{r assign-nhoods, message = FALSE}
+
+
+set.seed(32)
+sce_milo = miloDE::assign_neighbourhoods(sce , k = 20, prop = 0.1 , order = 2 , reducedDim_name = "scVI" , filtering = T)
+saveRDS(sce_milo , file = paste0(root.dir , "data/processed/simulations/sce_milo_w_simulations.Rds"))
+
+
+```
+
+# DE testing
+
+```{r milo-de, message = FALSE}
+
+stat_de_example = miloDE::de_test_neighbourhoods(sce_milo , min_count = 0 , min_n_cells_per_sample = 1 , design = ~type , covariates = "type" , BPPARAM = mcparam)
+saveRDS(stat_de_example , file = paste0(root.dir , "data/processed/simulations/milo_de_w_simulations.Rds"))
+
+
+```
+
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```
