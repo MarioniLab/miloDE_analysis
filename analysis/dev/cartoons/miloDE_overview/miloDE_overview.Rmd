@@ -58,6 +58,9 @@ sce$sample = sapply(1:ncol(sce) , function(i) samples[which(stringr::str_detect(
 #saveRDS(sce , file = paste0(root.dir , "data/processed/4_cartoon/sce.Rds"))
 sce = readRDS(paste0(root.dir , "data/processed/4_cartoon/sce.Rds"))
 
+rowdata = as.data.frame(rowData(sce))
+colnames(rowdata)[colnames(rowdata) == "ENSEMBL"] = "gene"
+
 
 ```
 
@@ -146,7 +149,7 @@ sce_milo_filtered = readRDS(paste0(root.dir , "data/processed/4_cartoon/sce_milo
 get_plot = function(sce_milo , color_hoods = F , edge_weight.thresh = 100 , size_range=c(0.5,3) , legend = F){
   require(igraph)
   nh_graph <- nhoodGraph(sce_milo)
-  nh_graph <- igraph::delete.edges(nh_graph, which(E(nh_graph)$weight <= edge_weight.thresh)-1)
+  nh_graph <- igraph::delete.edges(nh_graph, which(E(nh_graph)$weight <= edge_weight.thresh))
   nhoodGraph(sce_milo) = nh_graph
    
   if (!color_hoods){
@@ -171,19 +174,19 @@ get_plot = function(sce_milo , color_hoods = F , edge_weight.thresh = 100 , size
 
 
 
-p = get_plot(sce_milo , edge_weight.thresh = 350 , size_range = c(1,5))
+p = get_plot(sce_milo , edge_weight.thresh = 100 , size_range = c(1,5))
 p
 ggsave(filename = paste0(figures.dir, "milo_plots/sce_milo_no_color", ".png"), plot = p, width = 4, height = 4)
 
-p = get_plot(sce_milo_filtered, edge_weight.thresh = 50 , size_range = c(1,5))
+p = get_plot(sce_milo_filtered, edge_weight.thresh = 100 , size_range = c(1,5))
 p
 ggsave(filename = paste0(figures.dir, "milo_plots/sce_milo_filtered_no_color", ".png"), plot = p, width = 4, height = 4)
 
-p = get_plot(sce_milo , color_hoods = T, edge_weight.thresh = 350 , size_range = c(1,5))
+p = get_plot(sce_milo , color_hoods = T, edge_weight.thresh = 100 , size_range = c(1,5))
 p
 ggsave(filename = paste0(figures.dir, "milo_plots/sce_milo_color", ".png"), plot = p, width = 5, height = 4)
 
-p = get_plot(sce_milo_filtered, color_hoods = T, edge_weight.thresh = 50 , size_range = c(1,5))
+p = get_plot(sce_milo_filtered, color_hoods = T, edge_weight.thresh = 100 , size_range = c(1,5))
 p
 ggsave(filename = paste0(figures.dir, "milo_plots/sce_milo_filtered_color", ".png"), plot = p, width = 5, height = 4)
 
@@ -260,7 +263,7 @@ genes_2_plot = c("Afp" , "Cbx3" , "Rpgrip1" ,  "Ddit4" , "Igbp1" , "Hipk1" , "49
 plots = lapply(genes_2_plot , function(gene){
   ensembl = rowdata$gene[rowdata$SYMBOL == gene]
   p = miloDE::plot_DE_single_gene(sce_milo_filtered , stat_de , gene = ensembl , layout = "UMAP_scVI" , size_range = c(1,5) , 
-                                  edge_weight.thresh = 50 , set_na_to_0 = TRUE) +
+                                  edge_weight.thresh = 100 , set_na_to_0 = TRUE) +
     guides(size=FALSE, width=FALSE ,edge_width=FALSE) +
     theme(legend.text=element_text(size=15) , legend.title = element_text(size=20))
   print(p)
