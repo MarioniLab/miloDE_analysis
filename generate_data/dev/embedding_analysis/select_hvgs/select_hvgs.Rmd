@@ -29,54 +29,41 @@ set.seed(32)
 
 root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
 
-# load sce with embedding
-sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/chimera/mouse_embryo_chimera_tal.Rds"))
-# subselect for TAL1+ cells
-sce = sce[, sce$tal1 == 1]
-sce$type = sapply(sce$type , function(x) ifelse(x == "wt" , "WT" , "ChimeraWT"))
-sce$type = factor(sce$type , levels = c("WT" , "ChimeraWT"))
-
-rowdata = as.data.frame(rowData(sce))
-genes_chimera_specific = c("Rpgrip1" , "Slc24a5" , "Cbx3" )
+# load sce 
+sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/mouse_embryo_wt_chimera.Rds"))
 
 ```
 
-# Assign neighbourhoods
+# Get HVGs
 
-```{r assign-nhoods, message = FALSE}
+Either only atlas (aka reference) or union of atlas and chimera
 
-
-sce_milo = bplapply(embeddings , function(embedding){
- print(embedding)
- current.sce = miloDE::assign_neighbourhoods(sce , reducedDim_name = embedding , k = 100, prop = 0.2 , order = 1, filtering = T)
- return(current.sce)
-} , BPPARAM = mcparam)
-names(sce_milo) = embeddings
-saveRDS(sce_milo , file = paste0(root.dir , "data/processed/embedding_analysis/sce_milo.Rds"))
+```{r get-hvgs, message = FALSE}
 
 
+get_hvgs = function(sce , type , n = 3000){
+  require(scran)
+  current.sce = sce[, sce$type == type]
+  hvgs = getTopHVGs(current.sce , n = n)
+  return(hvgs)
+}
 
-```
+hvgs_wt = get_hvgs(sce , "wt")
+hvgs_chimera = get_hvgs(sce , "chimera")
+hvgs_union = unique(c(hvgs_wt , hvgs_chimera))
 
-# DE stat
+hvgs_wt = as.data.frame(hvgs_wt)
+colnames(hvgs_wt) = "HVG"
+write.csv(hvgs_wt , paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/HVGs/wt.csv"))
 
-```{r de-stat, message = FALSE}
-
-
-sce_milo = readRDS(paste0(root.dir , "data/processed/embedding_analysis/sce_milo.Rds"))
-de_stat = lapply(1:length(sce_milo) , function(i){
-  out = miloDE::de_test_neighbourhoods(sce_milo[[i]] , design = ~type , covariates = c("type") , min_count = 0 , 
-	min_n_cells_per_sample = 1 , BPPARAM = mcparam , output_type = "data.frame")
-  out = out[out$gene %in% rowdata$ENSEMBL[rowdata$SYMBOL %in% genes_chimera_specific] , ]
-  out$embedding = embeddings[i]
-  return(out)
-})
-de_stat = do.call(rbind , de_stat)  
-saveRDS(de_stat , file = paste0(root.dir , "data/processed/embedding_analysis/milo_de_stat.Rds"))
+hvgs_union = as.data.frame(hvgs_union)
+colnames(hvgs_union) = "HVG"
+write.csv(hvgs_union , paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/HVGs/all.csv"))
 
 
 
 ```
+
 
 # Session Info
 

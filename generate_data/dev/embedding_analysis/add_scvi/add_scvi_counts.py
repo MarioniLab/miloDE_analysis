@@ -14,53 +14,43 @@ device = torch.device("cuda")
 # set pars
 parser = argparse.ArgumentParser()
 group = parser.add_mutually_exclusive_group()
-parser.add_argument("n_layers", type=int, help="n_layers")
-parser.add_argument("counts_assay", help="counts_assay")
-args = parser.parse_args()
+parser.add_argument("hvg_file", help="hvg_file")
 
-
-root_dir = '/nfs/research/marioni/alsu/snc/'
-adata = sc.read_h5ad(root_dir + 'data/sces/thymus/sce' + '.h5ad')
-adata.obs['batch'] = adata.obs['batch'].astype("category")
-adata.layers["counts_all_genefull"] = adata.X
-
-adata.X = adata.layers[args.counts_assay]
+# load adata
+root_dir = '/nfs/research/marioni/alsu/hubmap_metaRef/'
+adata = sc.read_h5ad(root_dir + 'data/sces/mouse_embryo/chimera_WT/mouse_embryo_wt_chimera' + '.h5ad')
+adata.obs['sample'] = adata.obs['sample'].astype("category")
 adata.layers["counts"] = adata.X
+
+# get genes
+df = pd.read_csv(root_dir + 'data/sces/mouse_embryo/chimera_WT/HVGs/'+ args.hvg_file + '.csv')
+genes = df['HVG'].tolist()
+adata = adata[:, adata.var_names.isin(genes)]
 
 
 # Func
-def _train_model(adata_ref, batch_col=None , n_layers=2):
+def _train_model(adata, batch_col=None , n_layers=2):
     # assign batch if provided
     if batch_col is None:
-        adata_ref.obs['batch'] = '1'
+        adata.obs['batch'] = '1'
     else:
-        adata_ref.obs['batch'] = adata_ref.obs[batch_col].copy()
+        adata.obs['batch'] = adata.obs[batch_col].copy()
 
     # set up model    
-    scvi.model.SCVI.setup_anndata(adata_ref, batch_key="batch", layer='counts')
-
-    arches_params = dict(
-        use_layer_norm="both",
-        use_batch_norm="none",
-        encode_covariates=True,
-        dropout_rate=0.2,
-        n_layers=n_layers,
-    )
-    
+    scvi.model.SCVI.setup_anndata(adata, batch_key="batch", layer='counts')
+    # train
     vae = scvi.model.SCVI(adata, n_layers = n_layers, n_latent=30, gene_likelihood="nb")
     vae.train()
     adata.obsm["X_scVI"] = vae.get_latent_representation()
-    return(vae_ref)
+    return(vae)
 
 
 # run
-vae = _train_model(adata, batch_col='batch', n_layers = 2)
+vae = _train_model(adata, batch_col='sample', n_layers = 2)
 
 # save embedding
 obsm = adata.obsm['X_scVI']
 rownames = adata.obs_vector('cell')
 df = pd.DataFrame(obsm, index=rownames)
-df.to_csv(root_dir + 'data/sces/thymus/scvi/' + args.counts_assay +'__n_' + str(args.n_layers) +'.csv', index=True)
-
-
+df.to_csv(root_dir + 'data/sces/mouse_embryo/chimera_WT/scvi/scvi_unsupervised_' + args.hvg_file +'.csv', index=True)
 

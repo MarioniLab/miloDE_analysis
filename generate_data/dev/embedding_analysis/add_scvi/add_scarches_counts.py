@@ -14,18 +14,18 @@ device = torch.device("cuda")
 # set pars
 parser = argparse.ArgumentParser()
 group = parser.add_mutually_exclusive_group()
-parser.add_argument("n_layers", type=int, help="n_layers")
-parser.add_argument("counts_assay", help="counts_assay")
-parser.add_argument("ref_type", help="ref_type")
-args = parser.parse_args()
+parser.add_argument("hvg_file", help="hvg_file")
 
-root_dir = '/nfs/research/marioni/alsu/snc/'
-adata = sc.read_h5ad(root_dir + 'data/sces/thymus/sce' + '.h5ad')
-adata.obs['batch'] = adata.obs['batch'].astype("category")
-adata.layers["counts_all_genefull"] = adata.X
-
-adata.X = adata.layers[args.counts_assay]
+# load adata
+root_dir = '/nfs/research/marioni/alsu/hubmap_metaRef/'
+adata = sc.read_h5ad(root_dir + 'data/sces/mouse_embryo/chimera_WT/mouse_embryo_wt_chimera' + '.h5ad')
+adata.obs['sample'] = adata.obs['sample'].astype("category")
 adata.layers["counts"] = adata.X
+
+# get genes
+df = pd.read_csv(root_dir + 'data/sces/mouse_embryo/chimera_WT/HVGs/'+ args.hvg_file + '.csv')
+genes = df['HVG'].tolist()
+adata = adata[:, adata.var_names.isin(genes)]
 
 
 # Func
@@ -74,12 +74,12 @@ def _fit_model(adata_query, vae_ref, batch_col=None):
 
 
 # split data: first sn to sce
-adata_ref = adata[adata.obs['type']==args.ref_type].copy()
-adata_query = adata[adata.obs['type']!=args.ref_type].copy()
+adata_ref = adata[adata.obs['type']=='wt'].copy()
+adata_query = adata[adata.obs['type']!='wt'].copy()
 
 # run
-vae_ref = _train_model(adata_ref, batch_col='batch', n_layers = args.n_layers)
-vae_q_fit = _fit_model(adata_query, vae_ref, batch_col='batch')
+vae_ref = _train_model(adata_ref, batch_col='sample', n_layers = 2)
+vae_q_fit = _fit_model(adata_query, vae_ref, batch_col='sample')
 
 # get_observation
 adata_full = adata_query.concatenate(adata_ref, batch_key='dataset')
@@ -92,7 +92,7 @@ adata_full.obsm["X_scVI"] = vae_q_fit.get_latent_representation(adata_full)
 obsm = adata_full.obsm['X_scVI']
 rownames = adata_full.obs_vector('cell')
 df = pd.DataFrame(obsm, index=rownames)
-df.to_csv(root_dir + 'data/sces/thymus/scarches/' + args.counts_assay +'__ref_' + args.ref_type + '_n_' + str(args.n_layers) +'.csv', index=True)
+df.to_csv(root_dir + 'data/sces/mouse_embryo/chimera_WT/scvi/scvi_supervised_' + args.hvg_file +'.csv', index=True)
 
 
 

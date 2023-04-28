@@ -7,25 +7,12 @@ err_folder=${my_folder}/clust_err/lung
 #RAM in megabytes
 memory=90000
 
-#out_folder=/nfs/research1/marioni/alsu/geneBasis/data/processed_time/scmer/spleen
 
-#cd $out_folder
-
-n_layers=(2 3)
-counts_assay=("counts_all_genefull" "counts_all_genefull_corrected" "counts_unspliced" "counts_unspliced_corrected")
-ref_type=("cells nuclei")
-
-for n_layers in 2 3
+for hvg_file in "all" "wt"
 do
-	for counts_assay in "counts_all_genefull" "counts_all_genefull_corrected" "counts_unspliced" "counts_unspliced_corrected"
-	do
-		for ref_type in "cells" "nuclei"
-		do
-            script_name=arc_thy
-            bsub -e ${err_folder}/${script_name} \
-            -o ${out_folder}/${script_name} \
-            -q gpu -gpu "num=1:gmem=10000" -M 90000 -J ${script_name} \
-            "source /hps/software/users/marioni/andrian/miniconda3/bin/activate && conda activate /nfs/research/marioni/andrian/conda_environment/test_env && python3 /nfs/research/marioni/alsu/snc/snc_analysis/gendata/thymus_analysis/integration/scvi/add_scarches_counts.py $n_layers $counts_assay $ref_type"
-		done
-	done
+    script_name=scvi_sup
+    bsub -e ${err_folder}/${script_name} \
+    -o ${out_folder}/${script_name} \
+    -q gpu -gpu "num=1:gmem=10000" -M 90000 -J ${script_name} \
+    "source /hps/software/users/marioni/andrian/miniconda3/bin/activate && conda activate /nfs/research/marioni/andrian/conda_environment/test_env && python3 /nfs/research/marioni/alsu/hubmap_metaRef/miloDE_analysis/generate_data/dev/embedding_analysis/add_scvi/add_scarches_counts.py $hvg_file"
 done
