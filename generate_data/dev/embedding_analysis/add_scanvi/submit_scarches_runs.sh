@@ -10,9 +10,9 @@ memory=90000
 
 for hvg_file in "all" "wt"
 do
-    script_name=scvi_un
+    script_name=scanvi_sup
     bsub -e ${err_folder}/${script_name} \
     -o ${out_folder}/${script_name} \
     -q gpu -gpu "num=1:gmem=10000" -M 90000 -J ${script_name} \
-    "source /hps/software/users/marioni/andrian/miniconda3/bin/activate && conda activate /nfs/research/marioni/andrian/conda_environment/test_env && python3 /nfs/research/marioni/alsu/hubmap_metaRef/miloDE_analysis/generate_data/dev/embedding_analysis/add_scvi/add_scvi_counts.py $hvg_file"
+    "source /hps/software/users/marioni/andrian/miniconda3/bin/activate && conda activate /nfs/research/marioni/andrian/conda_environment/test_env && python3 /nfs/research/marioni/alsu/hubmap_metaRef/miloDE_analysis/generate_data/dev/embedding_analysis/add_scanvi/add_scarches_counts.py $hvg_file"
 done
