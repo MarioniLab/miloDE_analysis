@@ -16,7 +16,7 @@ r_command="rusage[mem=${memory}]"
 nproc=1
 
 
-smg=/hps/software/users/marioni/alsu/singularity/alsu_miloDev.simg
+smg=/hps/software/users/marioni/alsu/singularity/alsu_miloDE.simg
 script=/nfs/research/marioni/alsu/hubmap_metaRef/miloDE_analysis/generate_data/datasets/mouse_embryo/chimera_WT/run_rmd.R
 
 bsub -q bigmem -e ${err_folder}/${script_name} \
