@@ -1,0 +1,374 @@
+---
+title: "This pipeline to test different embedding strategies"
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+```{r load, message = FALSE}
+
+
+library(SingleCellExperiment)
+library(miloDE)
+library(miloR)
+library(BiocParallel)
+library(ggplot2)
+library(ggpubr)
+library(geneBasisR)
+library(MouseGastrulationData)
+library(scran)
+library(MetBrewer)
+
+ncores = 5
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+set.seed(32)
+
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+figures.dir = paste0(root.dir , "figures/optimal_coverage/embedding/")
+
+
+# load sce with embedding
+sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/chimera/mouse_embryo_chimera_tal.Rds"))
+# subselect for TAL1+ cells
+sce = sce[, sce$tal1 == 1]
+sce$type = sapply(sce$type , function(x) ifelse(x == "wt" , "WT" , "ChimeraWT"))
+sce$type = factor(sce$type , levels = c("WT" , "ChimeraWT"))
+
+rowdata = as.data.frame(rowData(sce))
+
+# add embedding cols
+embedding_cols = met.brewer("Archambault" , n = 6)
+embeddings = c("pca.corrected_chimera" , "pca.corrected_all" , "pca.corrected_wt" ,   "pca.corrected_ref.proj", "azimuth" , "scVI")
+names(embedding_cols) = embeddings
+titles = c("MNN (HVGs from \nchimera samples)" , "MNN (HVGs from \nall samples)" , "MNN (HVGs from \nWT samples)" , 
+           "Reference-projected\nMNN " , "Azimuth\n " , "scArches\n ")
+
+
+# read sce-milo (nhoods assigned) and de-stat
+sce_milo = readRDS(paste0(root.dir , "data/processed/embedding_analysis/sce_milo.Rds"))
+de_stat = readRDS(file = paste0(root.dir , "data/processed/embedding_analysis/milo_de_stat.Rds"))
+
+
+
+```
+
+# UMAPs, colored by CT
+
+```{r umaps-by-ct, message = FALSE}
+
+
+
+get_umap_plot = function(sce , reducedDim.name , title){
+  set.seed(32)
+  umaps = as.data.frame( reducedDim(sce , paste0("UMAP_" , reducedDim.name)) )
+  umaps = cbind(umaps , as.data.frame(colData(sce)))
+  p = ggplot(umaps , aes(x = V1 , y = V2 , col = celltype)) + 
+    geom_point(size=0.5) + 
+    facet_wrap(~type , nrow = 2) + 
+    theme_bw() + 
+    theme(legend.position = "none") + 
+    scale_color_manual(values = EmbryoCelltypeColours) + 
+    ggtitle(reducedDim.name) +
+    labs(x = "" , y = "") + 
+    ggtitle(title)
+  return(p)
+}
+
+
+plots = lapply(1:length(embeddings), function(i){
+  p = get_umap_plot(sce , embeddings[i] , titles[i])
+  return(p)
+})
+p = ggarrange(plotlist = plots , common.legend = F , ncol = length(embeddings))
+p
+ggsave(filename = paste0(figures.dir, "umaps_by_ct", ".png"), plot = p, width = 16, height = 5)
+
+
+
+```
+
+# Select chimera-specific genes for testing
+
+```{r check-chimera-genes, message = FALSE}
+
+
+
+get_de_genes_bulk = function(sce , celltype){
+  require(tibble)
+  require(edgeR)
+  sce = sce[ , sce$celltype == celltype]
+  summed = summarizeAssayByGroup(counts(sce), colData(sce)[,c("sample","type")])
+  y <- DGEList(assay(summed, "sum"), samples=colData(summed), lib.size = colSums(assay(summed , "sum")))
+  keep <- filterByExpr(y, group=summed$sample , min.count = 2 , min.total.count = 4)
+  y <- y[keep,]
+  y <- calcNormFactors(y)
+  design <- model.matrix(~ factor(type), y$samples)
+  y <- estimateDisp(y, design)
+  fit <- glmQLFit(y, design, robust=TRUE)
+  res <- glmQLFTest(fit, coef=ncol(design))
+  out = topTags(res, n = Inf )
+  out = as.data.frame(out)
+  out = rownames_to_column(out , var = "ENSEMBL")
+  out = merge(out , rowdata , all.x = T , all.y = F)
+  return(out)
+}      
+
+
+celltypes = table(sce$celltype)
+celltypes = names(celltypes)[celltypes >= 100]
+
+de_stat_bulk = lapply(celltypes , function(celltype){
+  print(celltype)
+  out = get_de_genes_bulk(sce , celltype)
+  out$celltype = celltype
+  return(out)
+})
+de_stat_bulk = do.call(rbind , de_stat_bulk)
+
+
+
+de_stat_per_gene = as.data.frame(de_stat_bulk %>% group_by(ENSEMBL , SYMBOL) %>% dplyr::summarise(median_pval = median(PValue , na.rm = T) , median_logFC = median(logFC , na.rm = T) , mean_cts_sig = mean(FDR < 0.05 , na.rm = T)))
+
+de_stat_per_gene = de_stat_per_gene[de_stat_per_gene$mean_cts_sig == 1, ]
+de_stat_per_gene = de_stat_per_gene[order(de_stat_per_gene$median_logFC , decreasing = T) , ]
+
+de_stat_per_gene$SYMBOL[1:3]
+# first 3 genes are:
+genes_chimera_specific = c("Rpgrip1" , "Slc24a5" , "Cbx3" )
+
+
+
+```
+
+## Boxplot w/ counts
+
+```{r boxplot-w-chimera-specific-counts, message = FALSE}
+
+
+cols = wesanderson::wes_palette("Royal1" , 2)
+
+get_boxplot_per_gene = function(gene){
+  df = data.frame(cell = sce$cell , sample = sce$sample , type = sce$type , 
+                  counts = as.numeric(logcounts(sce[rowdata$ENSEMBL[rowdata$SYMBOL == gene] , ])))
+  df = cbind(df , as.data.frame(reducedDim(sce , "UMAP_pca.corrected_all")))
+  df = df[order(df$counts) , ]
+  p = ggplot(df , aes(x = type , y = counts , fill = type)) + 
+    geom_boxplot(alpha = .9) + 
+    theme_bw() + 
+    theme(legend.position = "right") + 
+    scale_fill_manual(values = cols , name = "Condition") +
+    ggtitle(gene) +
+    theme(axis.text.x = element_blank()) +
+    labs(x = "" , y = "logcounts") 
+    #theme(legend.text=element_text(size=15) , legend.title=element_text(size=20))
+  return(p)
+}
+
+plots = lapply(genes_chimera_specific , function(gene){
+  p = get_boxplot_per_gene(gene)
+})
+p = ggarrange(plotlist = plots , common.legend = T , ncol = length(genes_chimera_specific) , legend = "right")
+p
+ggsave(filename = paste0(figures.dir, "boxplot_w_chimera_genes_counts", ".png"), plot = p, width = 7, height = 2)
+
+
+
+```
+
+
+# Neighbourhood homogeneity
+
+## Get homogeneity stat
+
+```{r stat-heterogeneity-hoods, message = FALSE}
+
+
+
+get_mean_sd_distr_per_hood = function(current.sce_milo , gene){
+   df = data.frame(cell = colnames(current.sce_milo) , 
+                            sample = current.sce_milo$sample,
+                            type = current.sce_milo$type , 
+                            counts = as.numeric(logcounts(current.sce_milo[rowdata$ENSEMBL[rowdata$SYMBOL == as.character(gene)] , ])))
+  
+  nhoods_sce = nhoods(current.sce_milo)
+  stat = lapply(1:ncol(nhoods_sce) , function(i){
+    idx = which(nhoods_sce[,i] == 1 )
+    current.df = df[idx,]
+    current.stat = as.data.frame(current.df %>% group_by(type) %>% dplyr::summarise(mean = mean(counts) , sd = sd(counts)))
+    current.stat$Nhood = i
+    return(current.stat)
+  })
+  stat = do.call(rbind , stat)
+  return(stat)
+}
+
+anno = expand.grid(gene = genes_chimera_specific , reduced.dim_name = embeddings)
+stat = lapply(1:nrow(anno) , function(i){
+  current.sce_milo = sce_milo[[which(names(sce_milo) == anno$reduced.dim_name[i])]]
+  out = get_mean_sd_distr_per_hood(current.sce_milo , gene = anno$gene[i])
+  out$gene = anno$gene[i]
+  out$embedding = anno$reduced.dim_name[i]
+  return(out)
+})
+stat = do.call(rbind , stat)
+stat = stat[order(stat$mean) , ]
+stat$type = factor(stat$type , levels = c("WT" , "ChimeraWT"))
+
+anno_embedding = data.frame(embedding = c("pca.corrected_chimera" , "pca.corrected_all" , "pca.corrected_wt" , 
+                                          "pca.corrected_ref.proj" , "azimuth" , "scVI"), 
+                            embedding_name = c("MNN (HVGs - Chimera)" , "MNN (HVGs - All)" , 
+                          "MNN (HVGs - WT)" , "Reference-projected MNN" , "Azimuth" , "scArches"))
+stat = merge(stat , anno_embedding , all.x = T , all.y = F)
+stat$embedding_name = factor(stat$embedding_name , levels = c("MNN (HVGs - Chimera)" , "MNN (HVGs - All)" , 
+                          "MNN (HVGs - WT)" , "Reference-projected MNN" , "Azimuth" , "scArches"))
+
+
+
+
+
+```
+
+
+# Plot
+
+```{r plot-sd-boxplot, message = FALSE}
+
+
+
+names(embedding_cols) = c("MNN (HVGs - Chimera)" , "MNN (HVGs - All)" , 
+                          "MNN (HVGs - WT)" , "Reference-projected MNN" , "Azimuth" , "scArches")
+
+
+stat$gene = factor(stat$gene , levels = genes_chimera_specific)
+p = ggplot(stat , aes(x = type , y = sd , fill = embedding_name)) + 
+  geom_boxplot(alpha = .9 , outlier.size= .25) + 
+  facet_wrap(~gene ) + 
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45 , vjust = 0.5, hjust=0.5)) + 
+  scale_fill_manual(values = embedding_cols , name = "Embedding") + 
+  labs(x = "Condition" , y = "Expression s.d.") 
+p
+ggsave(filename = paste0(figures.dir, "sd_distr_boxplots", ".png"), plot = p, width = 9, height = 3)
+
+
+
+# get p-value stats
+unq.embeddings = as.character(unique(stat$embedding))
+unq.embeddings_grid = expand.grid(embedding_1 = unq.embeddings , 
+                                  embedding_2 = unq.embeddings , gene = genes_chimera_specific , type = unique(stat$type))
+unq.embeddings_grid = unq.embeddings_grid[!unq.embeddings_grid$embedding_1 ==
+                                            unq.embeddings_grid$embedding_2 , ]  
+
+pval_stat = sapply(1:nrow(unq.embeddings_grid) , function(i){
+  current.type = unq.embeddings_grid$type[i]
+  current.gene = unq.embeddings_grid$gene[i]
+  x = stat$sd[stat$type == current.type & stat$gene == current.gene & stat$embedding == unq.embeddings_grid$embedding_1[i]]
+  y = stat$sd[stat$type == current.type & stat$gene == current.gene & stat$embedding == unq.embeddings_grid$embedding_2[i]]
+    
+  current.test = t.test(x , y )  
+  return(current.test$p.value)
+})
+unq.embeddings_grid$pval = pval_stat
+unq.embeddings_grid$embedding_1 = factor(unq.embeddings_grid$embedding_1 , levels = embeddings)
+unq.embeddings_grid$embedding_2 = factor(unq.embeddings_grid$embedding_2 , levels = embeddings)
+
+
+# check if 10^-5 is a good cut off
+p = ggplot(unq.embeddings_grid[unq.embeddings_grid$type == "ChimeraWT" , ] , aes(x = embedding_1 , y = embedding_2 , fill = -log10(pval) )) +
+  geom_tile() +
+  facet_wrap(~gene + type) + 
+  scale_fill_gradient2(low = "red" , high = "green" , midpoint = 5) + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+p
+
+
+
+```
+
+
+# DE-stat
+
+## Boxplot distr - logFC and n-hoods-sig
+
+```{r boxplot-distr-milo-de, message = FALSE}
+
+
+rowdata = as.data.frame(rowData(sce))
+colnames(de_stat)[colnames(de_stat) == "gene"] = "ENSEMBL"
+de_stat = merge(de_stat , rowdata , all.x = T , all.y = F)
+de_stat$embedding = factor(de_stat$embedding , levels = embeddings)
+de_stat = de_stat[de_stat$SYMBOL %in% genes_chimera_specific , ]
+de_stat$SYMBOL = factor(de_stat$SYMBOL , levels = genes_chimera_specific)
+
+
+names(embedding_cols) = embeddings
+
+genes = c("Rpgrip1" , "Slc24a5" , "Cbx3")
+lims = c(12,11,6)
+plots = lapply(c(1:3), function(i){
+  gene = genes[i]
+  p = ggplot(de_stat[de_stat$SYMBOL == gene , ], aes(x = SYMBOL , y = logFC , fill = embedding)) + 
+    geom_boxplot(alpha = .8 , outlier.size = .25) + 
+    theme_bw() + 
+    theme(axis.text.x = element_blank()) + 
+    scale_fill_manual(values = embedding_cols) +
+    labs(x = "" ) + 
+    theme(legend.position = "none") + 
+    ylim(c(0 , lims[i])) +
+    geom_hline(yintercept = de_stat_per_gene$median_logFC[de_stat_per_gene$SYMBOL == gene] , "color" = "black" , "linetype" = "dashed") + 
+    ggtitle(gene)
+  return(p)
+})
+p = ggarrange(plotlist = plots , ncol = 3)
+p
+ggsave(filename = paste0(figures.dir, "milo_de/logFC_distr", ".png"), plot = p, width = 7, height = 3)
+
+
+
+# check p-value stat
+unq.embeddings = as.character(unique(de_stat$embedding))
+unq.embeddings_grid = expand.grid(embedding_1 = unq.embeddings , 
+                                  embedding_2 = unq.embeddings , gene = genes_chimera_specific )
+unq.embeddings_grid = unq.embeddings_grid[!unq.embeddings_grid$embedding_1 ==
+                                            unq.embeddings_grid$embedding_2 , ]  
+
+pval_stat = sapply(1:nrow(unq.embeddings_grid) , function(i){
+  current.gene = unq.embeddings_grid$gene[i]
+  x = de_stat$logFC[ de_stat$SYMBOL == current.gene & de_stat$embedding == unq.embeddings_grid$embedding_1[i]]
+  y = de_stat$logFC[de_stat$SYMBOL == current.gene & de_stat$embedding == unq.embeddings_grid$embedding_2[i]]
+    
+  current.test = t.test(x , y )  
+  return(current.test$p.value)
+})
+unq.embeddings_grid$pval = pval_stat
+
+unq.embeddings_grid$embedding_1 = factor(unq.embeddings_grid$embedding_1 , levels = embeddings)
+unq.embeddings_grid$embedding_2 = factor(unq.embeddings_grid$embedding_2 , levels = embeddings)
+
+
+# test for diff genes what is there p-value distr
+unq.embeddings_grid$test = unq.embeddings_grid$pval < 0.05
+p = ggplot(unq.embeddings_grid , aes(x = embedding_1 , y = embedding_2 , fill = test )) +
+  geom_tile() +
+  facet_wrap(~gene) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+p
+
+
+
+
+```
+
+
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```
