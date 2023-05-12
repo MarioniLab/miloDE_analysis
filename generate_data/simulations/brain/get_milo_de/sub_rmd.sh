@@ -13,7 +13,7 @@ script_name=md_sim
 memory=700000
 r_command="rusage[mem=${memory}]"
 #num_processors
-nproc=18
+nproc=30
 
 
 smg=/hps/software/users/marioni/alsu/singularity/alsu_miloDE.simg

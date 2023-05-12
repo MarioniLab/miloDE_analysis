@@ -53,10 +53,10 @@ anno$seed[anno$round == 3] = 98
 sce_milo = lapply(1:nrow(anno) , function(i){
  set.seed(anno$seed[i])
  current.sce = miloDE::assign_neighbourhoods(sce , reducedDim_name = as.character(anno$reduced_dim[i]) , k = anno$k[i], prop = 0.1 , order = anno$order[i], filtering = T)
- return(current.sce)
+ return(nhoods(current.sce))
 })
 names(sce_milo) = anno$id
-saveRDS(sce_milo , file = paste0(root.dir , "data/processed/embedding_analysis_updated/sce_milo.Rds"))
+saveRDS(sce_milo , file = paste0(root.dir , "data/processed/embedding_analysis_updated/sce_milo_nhoods.Rds"))
 
 
 

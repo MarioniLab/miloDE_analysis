@@ -32,8 +32,11 @@ library(Matrix)
 library(splatter)
 library(BiocParallel)
 library(BiocSingular)
+library(miloR)
+library(miloDE)
+library(S4Vectors)
 
-ncores = 11
+ncores = 30
 mcparam = MulticoreParam(workers = ncores)
 register(mcparam)
 
@@ -41,9 +44,33 @@ set.seed(32)
 
 root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
 
-simulated_genes = readRDS(file = paste0(root.dir , "data/processed/simulations/simulated_genes.Rds"))
+simulated_genes = readRDS(file = paste0(root.dir , "data/processed/simulations/brain/simulated_genes.Rds"))
+sces = readRDS(paste0(root.dir , "data/processed/simulations/brain/sces_simulated.Rds"))
 
-anno = expand.grid(order = 2, k = seq(20,30,5), prop = c(0.1), round = c(4:5))
+cluster_splits = list(c(8) , c(3) , c(5) ,c(1,7) ,  c(5,8) , c(3,6)  , c(3,2,6) , c(1,4,5,7) , c(1,4,5,7,2) , c(1,2,3,4,5,6,7))
+
+
+```
+
+# Get sce-milo
+
+We wont be saving this coz its easy to recalc and it weights a lot
+
+```{r get-sce-milo, message = FALSE}
+
+
+anno = expand.grid(order = 2, k = seq(15,30,5), prop = c(0.1), round = c(1:5))
+anno$id = paste0(anno$order , "_" , anno$k , "_" , anno$round)
+
+sces_milo = lapply(sces , function(sce){
+  sce_milo = bplapply(1:nrow(anno) , function(i){
+    set.seed(anno$round[i])
+    out = miloDE::assign_neighbourhoods(sce , k = anno$k[i], prop = anno$prop[i] , order = anno$order[i] , reducedDim_name = "scvi_supervised_wt" , filtering = T)
+    return(out)
+  }, BPPARAM = mcparam)
+  return(sce_milo)
+})
+
 
 
 
@@ -53,6 +80,67 @@ anno = expand.grid(order = 2, k = seq(20,30,5), prop = c(0.1), round = c(4:5))
 
 ```{r functions, message = FALSE}
 
+
+
+get_de_selected_genes = function(sce_milo , genes){
+ 
+  current.nhoods = nhoods(sce_milo)
+  subset_nhoods = c(1:ncol(current.nhoods))
+  
+  de_stat = bplapply(seq(length(subset_nhoods)) , function(i){
+    print(i)
+    hood_id = subset_nhoods[i]
+    out = de_test_single_neighbourhood(sce_milo , nhoods_x = current.nhoods, hood_id = hood_id,
+                                           sample_id = "sample", design = ~type, covariates = c("type"), contrasts = NULL,
+                                           min_n_cells_per_sample = 1 ,
+                                           min_count = 1 , run_separately = T)
+    out = out[out$gene %in% genes , ]
+    return(out)
+  }, BPPARAM = mcparam)
+  
+  # put together in SCE format
+  de_stat_sce = SingleCellExperiment(list(logFC = matrix(NA, nrow = nrow(sce_milo), ncol = length(subset_nhoods)) ,
+                                            pval = matrix(NA, nrow = nrow(sce_milo), ncol = length(subset_nhoods)) ,
+                                            pval_corrected_across_genes = matrix(NA, nrow = nrow(sce_milo), ncol = length(subset_nhoods))))
+  rownames(de_stat_sce) = rownames(sce_milo)
+  for (i in seq(length(de_stat))){
+    current.de_stat = de_stat[[i]]
+    assay(de_stat_sce , "logFC")[current.de_stat$gene , i] = current.de_stat$logFC
+    assay(de_stat_sce , "pval")[current.de_stat$gene , i] = current.de_stat$pval
+    assay(de_stat_sce , "pval_corrected_across_genes")[current.de_stat$gene , i] = current.de_stat$pval_corrected_across_genes
+  }
+
+  # add coldata on nhoods
+  meta_nhoods = lapply(seq(length(de_stat)) , function(i){
+    current.de_stat = de_stat[[i]]
+    current.meta = unique(current.de_stat[, c("Nhood" , "Nhood_center" , "test_performed" )])
+    return(current.meta)
+  })
+  meta_nhoods = do.call(rbind , meta_nhoods)
+  colData(de_stat_sce) = DataFrame(meta_nhoods)
+  colnames(de_stat_sce) = meta_nhoods$Nhood
+  
+  # select genes w at least one test
+  idx = which( rowMeans(is.na(assay(de_stat_sce , "pval"))) < 1)
+  de_stat_sce = de_stat_sce[idx , ]
+  
+  # pval correction
+  pval_corrected = bplapply(rownames(de_stat_sce) , function(gene){
+    pvals = assay(de_stat_sce , "pval")[gene , ]
+    out = miloDE::spatial_pval_adjustment(nhoods_x = as.matrix(current.nhoods[,subset_nhoods]) , pvalues = pvals)
+    return(out)
+  } , BPPARAM = mcparam)
+
+  # add the assay into final de-stat
+  assay_pval_corrected_across_nhoods = do.call(rbind , pval_corrected)
+  rownames(assay_pval_corrected_across_nhoods) = rownames(de_stat_sce)
+  colnames(assay_pval_corrected_across_nhoods) = colnames(de_stat_sce)
+  assay(de_stat_sce , "pval_corrected_across_nhoods") = assay_pval_corrected_across_nhoods
+  
+  # convert to data.frame
+  de_stat = convert_de_stat(de_stat_sce)
+  return(de_stat)
+}
 
 
 add_da = function(sce_milo , reducedDim_name , sample_id = "sample", condition_id , col_annotate , covariates = NULL){
@@ -98,8 +186,8 @@ add_da = function(sce_milo , reducedDim_name , sample_id = "sample", condition_i
 }
 
 
-add_stat = function(sce_milo){
-  stat_da = add_da(sce_milo , reducedDim_name = "scVI" , sample_id = "sample", condition_id = "type", col_annotate = NULL)
+add_stat = function(sce_milo , clusters){
+  stat_da = add_da(sce_milo , reducedDim_name = "scvi_supervised_wt" , sample_id = "sample", condition_id = "type", col_annotate = NULL)
   stat_da = stat_da[, c("Nhood", "logFC" , "SpatialFDR" )]
   colnames(stat_da) = c("Nhood", "logFC_DA" , "SpatialFDR_DA" )
   
@@ -110,8 +198,14 @@ add_stat = function(sce_milo){
                           hood_size = colSums(nhoods_sce)
                           )
   stat_da = merge(stat_da , nhood_stat , all.x = T , all.y = F)
-  stat_da = annotateNhoods(sce_milo, stat_da, coldata_col = "celltype")
-  stat_da = annotateNhoods(sce_milo, stat_da, coldata_col = "sub_celltype")
+  # get cluster purity
+  stat_da$cluster_purity = sapply(1:ncol(nhoods_sce) , function(i){
+    current.cells = which(nhoods_sce[,i] == 1)
+    current.cells = rownames(nhoods_sce)[current.cells]
+    out = mean(current.cells %in% sce_milo$cell[sce_milo$cluster %in% clusters])
+    return(out)
+  })
+  
   return(stat_da)
 }
 
@@ -123,35 +217,27 @@ add_stat = function(sce_milo){
 ```{r milo-de, message = FALSE}
 
 
-stat = lapply(1:nrow(anno) , function(i){
-  proc.file = paste0(root.dir ,  "data/processed/simulations/proc/" , anno$order[i] , "_k_" , anno$k[i] , "_round_" , anno$round[i], ".Rds")
-  if (!file.exists(proc.file)){
-    out.proc = 1
-    saveRDS(out.proc , paste0(root.dir ,  "data/processed/simulations/proc/" , anno$order[i] , "_k_" , anno$k[i] , "_round_" , anno$round[i], ".Rds"))
-    sce_milo = readRDS(paste0(root.dir ,  "data/processed/simulations/sce_milo/" ,"sce_order_", anno$order[i] , "_k_" , anno$k[i] , "_round_" , anno$round[i], ".Rds"))
+stat = lapply(1:length(sces_milo) , function(j){
+  sce_milo = sces_milo[[j]]
+  stat_per_sce = lapply(1:nrow(anno) , function(i){
+    print(i)
+    current.sce = sce_milo[[i]]
+    rowdata = as.data.frame(rowData(current.sce))
   
-    rowdata = as.data.frame(rowData(sce_milo))
-  
-    stat_de = miloDE::de_test_neighbourhoods(sce_milo , design = ~type , covariates = c("type") , 
-                                             min_count = 0 , min_n_cells_per_sample = 1 , BPPARAM = mcparam)
+    stat_de = get_de_selected_genes(current.sce , genes = simulated_genes$ENSEMBL)
     colnames(stat_de)[colnames(stat_de) == "gene"] = "ENSEMBL"
     stat_de = merge(stat_de , rowdata , all.x = T)
     
-    milo_stat = add_stat(sce_milo)
+    milo_stat = add_stat(current.sce , cluster_splits[[j]])
     stat_de = merge(stat_de , milo_stat , all.x = T)
     
-    stat_de = cbind(stat_de , anno[i , ])
-    
-    stat_de = stat_de[stat_de$ENSEMBL %in% simulated_genes$ENSEMBL , ]
-    saveRDS(stat_de , file = paste0(root.dir ,  "data/processed/simulations/milo_de_selected/" ,"milo_de_order_", anno$order[i] , "_k_" , anno$k[i] , "_round_" , anno$round[i], ".Rds"))
-    
-    return(NULL)
-  }
-  else{
-    return(NULL)
-  }
+    stat_de = cbind(stat_de , anno[i , c("order" , "k" , "round" , "id")])
+    return(stat_de)
+  })
+  stat_per_sce = do.call(rbind , stat_per_sce)
+  return(stat_per_sce)
 })
-
+saveRDS(stat , file = paste0(root.dir , "data/processed/simulations/brain/milo_de_stat.Rds"))
 
 
 

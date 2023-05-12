@@ -1,5 +1,5 @@
 ---
-title: "Assign neighbourhoods and miloDE for different embeddings."
+title: "Add MNN embedding to WT-chimera ds"
 output:
   BiocStyle::html_document:
     code_folding: hide
@@ -12,69 +12,87 @@ output:
 
 
 library(SingleCellExperiment)
-library(miloDE)
-library(miloR)
 library(BiocParallel)
-library(ggplot2)
-library(ggpubr)
-library(geneBasisR)
-library(MouseGastrulationData)
 library(scran)
-library(MetBrewer)
+library(batchelor)
 
-ncores = 15
+ncores = 6
 mcparam = MulticoreParam(workers = ncores)
 register(mcparam)
 set.seed(32)
 
 root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+source(paste0(root.dir , "miloDE_analysis/core_functions.R"))
 
-# load sce with embedding
-sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/chimera/mouse_embryo_chimera_tal.Rds"))
-# subselect for TAL1+ cells
-sce = sce[, sce$tal1 == 1]
-sce$type = sapply(sce$type , function(x) ifelse(x == "wt" , "WT" , "ChimeraWT"))
-sce$type = factor(sce$type , levels = c("WT" , "ChimeraWT"))
+# load sce 
+sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/mouse_embryo_wt_chimera.Rds"))
 
-rowdata = as.data.frame(rowData(sce))
-genes_chimera_specific = c("Rpgrip1" , "Slc24a5" , "Cbx3" )
+# load genes
+genes_wt = read.csv(paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/HVGs/wt.csv") , row.names = 1)
+genes_all = read.csv(paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/HVGs/all.csv") , row.names = 1)
 
-```
-
-# Assign neighbourhoods
-
-```{r assign-nhoods, message = FALSE}
-
-
-sce_milo = bplapply(embeddings , function(embedding){
- print(embedding)
- current.sce = miloDE::assign_neighbourhoods(sce , reducedDim_name = embedding , k = 100, prop = 0.2 , order = 1, filtering = T)
- return(current.sce)
-} , BPPARAM = mcparam)
-names(sce_milo) = embeddings
-saveRDS(sce_milo , file = paste0(root.dir , "data/processed/embedding_analysis/sce_milo.Rds"))
-
-
+genes = list(all = genes_all$HVG , wt = genes_wt$HVG)
 
 ```
 
-# DE stat
+# Define functions
 
-```{r de-stat, message = FALSE}
+Normal MNN is already in core-functions, need to add reference-projected PCA
 
-
-sce_milo = readRDS(paste0(root.dir , "data/processed/embedding_analysis/sce_milo.Rds"))
-de_stat = lapply(1:length(sce_milo) , function(i){
-  out = miloDE::de_test_neighbourhoods(sce_milo[[i]] , design = ~type , covariates = c("type") , min_count = 0 , 
-	min_n_cells_per_sample = 1 , BPPARAM = mcparam , output_type = "data.frame")
-  out = out[out$gene %in% rowdata$ENSEMBL[rowdata$SYMBOL %in% genes_chimera_specific] , ]
-  out$embedding = embeddings[i]
-  return(out)
-})
-de_stat = do.call(rbind , de_stat)  
-saveRDS(de_stat , file = paste0(root.dir , "data/processed/embedding_analysis/milo_de_stat.Rds"))
+```{r funcs, message = FALSE}
 
 
+add_batch_corrected_supervised_pca = function(sce, genes , reduced.dim_name = "pca.corrected" , batch = "sample" , d = 30){
+  require(batchelor)
+  sce_ref = sce[, sce$type == "wt"]
+  sce_query = sce[, !sce$type == "wt"]
+  
+  meta_ref = as.data.frame(colData(sce_ref))
+  batchFactor_ref = factor(meta_ref[, colnames(meta_ref) == batch])
+  
+  full_pca = multiBatchPCA(sce_ref[genes,] , batch = batchFactor_ref , d = d, preserve.single = TRUE, assay.type = "logcounts")
+  ref_pca <- full_pca[[1]]
+  to_proj <- (as.matrix(logcounts(sce_query)[genes,]) - rowMeans(as.matrix(logcounts(sce_query)[genes,])))/sqrt(rowVars(as.matrix(logcounts(sce_query)[genes,])))
+
+  map_pca <- t(to_proj) %*% metadata(full_pca)$rotation
+  big_pca <- rbind(ref_pca, map_pca)
+  # reorder
+  big_pca = big_pca[order(rownames(big_pca)) , ]
+  sce = sce[ , order(colnames(sce))]
+  
+  # correct
+  meta = as.data.frame(colData(sce))
+  batchFactor = factor(meta[, colnames(meta) == batch])
+  
+  out = reducedMNN(big_pca , batch = batchFactor )
+  joint.pca = out$corrected
+  reducedDim(sce , reduced.dim_name) = joint.pca
+  return(sce)
+}
+
+
+```
+
+# Run MNN
+
+```{r run-mnn, message = FALSE}
+
+
+anno = expand.grid(genes = c("wt" , "all") , embedding = c("supervised" , "unsupervised"))
+anno$genes = as.character(anno$genes)
+anno$embedding = as.character(anno$embedding)
+
+for (i in 1:nrow(anno)){
+  current.genes = genes[[which(names(genes) == anno$genes[i])]]
+  if (anno$embedding[i] == "supervised"){
+    sce = add_batch_corrected_supervised_pca(sce, genes = current.genes, reduced.dim_name = paste0("mnn_supervised_" , anno$genes[i]) , batch = "sample" , d = 30)
+  } else {
+    sce = add_batch_corrected_pca(sce, genes = current.genes, reduced.dim_name = paste0("mnn_unsupervised_" , anno$genes[i]) , batch = "sample" , d = 30, bpparam = mcparam , correct = T)
+  }
+}
+
+saveRDS(sce , paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/mouse_embryo_wt_chimera.Rds"))  
+  
 
 ```
 

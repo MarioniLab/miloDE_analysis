@@ -10,7 +10,7 @@ script_name=milo_da_de
 
 #CHOOSE PARAMETERS
 #RAM in megabytes
-memory=600000
+memory=700000
 r_command="rusage[mem=${memory}]"
 #num_processors
 nproc=20

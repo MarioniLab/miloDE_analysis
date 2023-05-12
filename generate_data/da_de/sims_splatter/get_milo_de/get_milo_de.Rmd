@@ -1,5 +1,5 @@
 ---
-title: "This pipeline to generate sims for hood selection analysis (Augur)"
+title: "This pipeline to get DA statistic for DA-DE analysis"
 output:
   BiocStyle::html_document:
     code_folding: hide
@@ -15,7 +15,12 @@ library(BiocParallel)
 library(geneBasisR)
 library(splatter)
 library(scran)
-ncores = 6
+library(miloR)
+library(miloDE)
+library(stringr)
+library(dplyr)
+
+ncores = 30
 mcparam = MulticoreParam(workers = ncores)
 register(mcparam)
 set.seed(32)
@@ -23,125 +28,73 @@ set.seed(32)
 root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
 source(paste0(root.dir , "miloDE_analysis/core_functions.R"))
 
-```
 
-# Estimate parameters
-
-```{r splatter-pars, message = FALSE}
+sims = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_splatter/sims.Rds"))
 
 
-sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/WT/mouse_embryo_E8.5.Rds"))
-sce = sce[, sce$sample == 17]
-sce = logNormCounts(sce)
-sce = retain_informative_genes(sce , n = 4000)
-counts(sce) = as.matrix(counts(sce))
-
-params = splatEstimate( sce )
+anno_1 = expand.grid(order = 1 , k = c(75,150,250) , seed = c(13,17,32,48,56))
+anno_2 = expand.grid(order = 2 , k = c(15,25,35) , seed = c(13,17,32,48,56))
+anno = rbind(anno_1 , anno_2)
 
 
 ```
 
-# Set parameter space
+# Get milo DE stat
 
-```{r assign-anno-grid, message = FALSE}
-
-
-n_cells_total = c(5000)
-n_batches = c(5)
-group_prob = c(0.25 , 0.5 , 0.75)
-de_prob = c(0, 0.05 , 0.25)
-de_facLoc = c(1, 2)
-
-anno = expand.grid(n_cells_total = n_cells_total , n_batches = n_batches,  group_prob = group_prob , de_prob = de_prob, de_facLoc = de_facLoc)
-anno = unique(anno)
+```{r milo-de-stat, message = FALSE}
 
 
-```
-
-# Generate datsets
-
-```{r gen-splatter-ds, message = FALSE}
-
-
-get_sample_selection = function(samples , n_samples){
-  samples = sort( sample(samples , n_samples) )
-  return(samples)
+get_milo_stat = function(sce_milo , reducedDim_name , pval.thresh = 0.1){
+  
+  de_stat = miloDE::de_test_neighbourhoods(sce_milo , design = ~factor(Group) , covariates = c("sample" , "Group") , min_n_cells_per_sample = 1, min_count = 0 , verbose = F)
+  colnames(de_stat)[colnames(de_stat) == "gene"] = "Gene"
+  rowdata = as.data.frame(rowData(sce_milo))
+  de_stat = merge(de_stat , rowdata[, c("Gene" , "DEFacGroup2")] , all.x = T , all.y = F)
+  # get combined stat per Nhood
+  stat = as.data.frame(de_stat %>% group_by(Nhood) %>% dplyr::summarise(
+    tp = sum(pval_corrected_across_genes <= pval.thresh & DEFacGroup2 != 1) ,
+    fp = sum(pval_corrected_across_genes <= pval.thresh & DEFacGroup2 == 1) , 
+    tn = sum(pval_corrected_across_genes > pval.thresh & DEFacGroup2 == 1) , 
+    fn = sum(pval_corrected_across_genes > pval.thresh & DEFacGroup2 != 1)
+  ))
+  stat$frac_DE = (stat$tp + stat$fp)/(stat$tp + stat$fp + stat$tn + stat$fn)
+  stat$n_DE = stat$tp + stat$fp
+  stat$reducedDim_name = reducedDim_name
+  return(stat)
 }
 
 
-sims_wo_batch = bplapply(1:nrow(anno) , function(i){
-  n_cells_total = anno$n_cells_total[i]
-  n_batches = anno$n_batches[i]
-  group_prob = c(anno$group_prob[i] , 1 - anno$group_prob[i])
-  de_prob = anno$de_prob[i]
-  de_facLoc = anno$de_facLoc[i]
-  n_cells_per_batch = rep(round(n_cells_total/n_batches) , 1 , n_batches)
+stat = bplapply(1:length(sims) , function(j){
+  sim = sims[[j]]
+  stat_per_sim = lapply(1:nrow(anno) , function(i){
+    set.seed(anno$seed[i])
+    out_all = miloDE::assign_neighbourhoods(sim , reducedDim_name = "pca.all" , order = anno$order[i] , k = anno$k[i] , d = 5 , verbose = F , filtering = T)
+    out_all = get_milo_stat(out_all , "pca.all")
     
-  sim = splatSimulateGroups(params, group.prob = group_prob, de.prob = c(0,de_prob) , de.facLoc = de_facLoc , batchCells = n_cells_per_batch, verbose = FALSE,  out.prob = 0 , batch.rmEffect = T , de.downProb = 0)
-  sim$sample = paste0(sim$Batch , "_" , sim$Group)
-  
-  # discard unnecessary fields
-  sim = SingleCellExperiment(list(counts = counts(sim)), 
-                           colData = colData(sim) , rowData = rowData(sim))
-  # add logcounts
-  sim = add_logcounts_simple(sim)
-  return(sim)
-} , BPPARAM = mcparam)
-saveRDS(sims_wo_batch , file = paste0(root.dir , "data/processed/hood_selection/sims_wo_batch.Rds"))
-
-
-
-# balanced batch
-sims_w_batch = bplapply(1:nrow(anno) , function(i){
-  n_cells_total = anno$n_cells_total[i]
-  n_batches = anno$n_batches[i]
-  group_prob = c(anno$group_prob[i] , 1 - anno$group_prob[i])
-  de_prob = anno$de_prob[i]
-  de_facLoc = anno$de_facLoc[i]
-  n_cells_per_batch = rep(round(n_cells_total/n_batches) , 1 , n_batches)
+    set.seed(anno$seed[i])
+    out_not_de = miloDE::assign_neighbourhoods(sim , reducedDim_name = "pca.not_de" , order = anno$order[i] , k = anno$k[i] , d = 5 , verbose = F , filtering = T)
+    out_not_de = get_milo_stat(out_not_de , "pca.not_de")
     
-  sim = splatSimulateGroups(params, group.prob = group_prob, de.prob = c(0,de_prob) , de.facLoc = de_facLoc , batchCells = n_cells_per_batch, verbose = FALSE,  out.prob = 0 , batch.rmEffect = F , de.downProb = 0)
-  sim$sample = paste0(sim$Batch , "_" , sim$Group)
-  
-  # discard unnecessary fields
-  sim = SingleCellExperiment(list(counts = counts(sim)), 
-                           colData = colData(sim) , rowData = rowData(sim))
-  # add logcounts
-  sim = add_logcounts_simple(sim)
-  return(sim)
-} , BPPARAM = mcparam)
-saveRDS(sims_w_batch , file = paste0(root.dir , "data/processed/hood_selection/sims_w_batch_balanced.Rds"))
-
-
-
-
-# misbalanced batch
-sims_w_batch = bplapply(1:nrow(anno) , function(i){
-  n_cells_total = anno$n_cells_total[i]
-  n_batches = anno$n_batches[i]
-  group_prob = c(anno$group_prob[i] , 1 - anno$group_prob[i])
-  de_prob = anno$de_prob[i]
-  de_facLoc = anno$de_facLoc[i]
-  n_cells_per_batch = rep(round(n_cells_total/n_batches) , 1 , n_batches)
+    out = rbind(out_all , out_not_de)
+    out = cbind(out , anno[i , ])
     
+    return(out)
+  })
+  stat_per_sim = do.call(rbind , stat_per_sim)
   
-  sim = splatSimulateGroups(params, group.prob = group_prob, de.prob = c(0,de_prob) , de.facLoc = de_facLoc , batchCells = n_cells_per_batch, verbose = FALSE,  out.prob = 0 , batch.rmEffect = F , de.downProb = 0)
-  sim$sample = paste0(sim$Batch , "_" , sim$Group)
+  id = names(sims)[j]
+  id = stringr::str_split(id , "_")
+  id = id[[1]]
+  stat_per_sim$batch_effect = as.logical(id[1])
+  stat_per_sim$de_prob = as.numeric(id[2])
+  stat_per_sim$de_facLoc = as.numeric(id[3])
+  stat_per_sim$round_sim = as.numeric(id[4])
   
-  # discard unnecessary fields
-  sim = SingleCellExperiment(list(counts = counts(sim)), 
-                           colData = colData(sim) , rowData = rowData(sim))
-  
-  # disbalance batches
-  samples_query = get_sample_selection( unique(sim$sample[sim$Group == "Group1"]) , 3)
-  samples_ref = get_sample_selection( unique(sim$sample[sim$Group == "Group2"]) , 3)
-  sim = sim[ , sim$sample %in% c(samples_query , samples_ref)]
-  
-  # add logcounts
-  sim = add_logcounts_simple(sim)
-  return(sim)
+  return(stat_per_sim)
 } , BPPARAM = mcparam)
-saveRDS(sims_w_batch , file = paste0(root.dir , "data/processed/hood_selection/sims_w_batch_misbalanced.Rds"))
+stat = do.call(rbind , stat)
+saveRDS(stat , file = paste0(root.dir , "data/processed/da_de/simulations_splatter/stat_de.Rds"))
+
 
 
 ```

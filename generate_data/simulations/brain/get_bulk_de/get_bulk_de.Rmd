@@ -32,8 +32,9 @@ library(Matrix)
 library(splatter)
 library(BiocParallel)
 library(BiocSingular)
+library(miloDE)
 
-ncores = 11
+ncores = 7
 mcparam = MulticoreParam(workers = ncores)
 register(mcparam)
 
@@ -41,11 +42,10 @@ set.seed(32)
 
 root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
 
-simulated_genes = readRDS(file = paste0(root.dir , "data/processed/simulations/simulated_genes.Rds"))
+simulated_genes = readRDS(file = paste0(root.dir , "data/processed/simulations/brain/simulated_genes.Rds"))
+sces = readRDS(paste0(root.dir , "data/processed/simulations/brain/sces_simulated.Rds"))
 
-anno = expand.grid(order = 2, k = seq(20,30,5), prop = c(0.1), round = c(4:5))
-
-
+cluster_splits = list(c(8) , c(3) , c(5) ,c(1,7) ,  c(5,8) , c(3,6)  , c(3,2,6) , c(1,4,5,7) , c(1,4,5,7,2) , c(1,2,3,4,5,6,7))
 
 ```
 
@@ -55,102 +55,49 @@ anno = expand.grid(order = 2, k = seq(20,30,5), prop = c(0.1), round = c(4:5))
 
 
 
-add_da = function(sce_milo , reducedDim_name , sample_id = "sample", condition_id , col_annotate , covariates = NULL){
-  require(dplyr)
-  require(miloR)
-  coldata <- as.data.frame(colData(sce_milo))
-  sce_milo$condition_id <- as.factor( coldata[, condition_id] )
-  sce_milo$sample_id <- as.factor( coldata[, sample_id] )
-  
-  sce_milo <- countCells(sce_milo, meta.data = as.data.frame(colData(sce_milo)), samples="sample_id")
-  sce_design <- data.frame(colData(sce_milo))[,c("sample_id", "condition_id" , covariates)]
-  sce_design <- distinct(sce_design)
-  rownames(sce_design) <- sce_design$sample_id
-  nhoodCounts(sce_milo) = as.matrix(nhoodCounts(sce_milo) , "dgCMatrix")
-  
-
-  if (!is.null(covariates)){
-    da_results = tryCatch(
-      {
-        out = testNhoods(sce_milo, design = as.formula( paste("~ ", paste(covariates, collapse="+"),sep = "" , " + condition_id") ) , design.df = sce_design, fdr.weighting = "graph-overlap", reduced.dim = reducedDim_name)
-        
-      },
-      error = function(dummy){
-        out = testNhoods(sce_milo, design = ~ factor(condition_id), design.df = sce_design, fdr.weighting = "graph-overlap", reduced.dim = reducedDim_name)
-        out$logFC = NaN
-        out$logCPM = NaN
-        out[, "F"] = NaN
-        out$PValue = NaN
-        out$FDR = NaN
-        out$SpatialFDR = NaN
-        return(out)
-      }
-    )
+get_bulk_de = function(sce , clusters = "all" , genes){
+  require(tibble)
+  if (class(clusters) == "numeric"){
+    sce = sce[, sce$cluster %in% clusters]
   }
-  else {
-    da_results <- testNhoods(sce_milo, design = ~ factor(condition_id), design.df = sce_design, fdr.weighting = "graph-overlap", reduced.dim = reducedDim_name)
-  }
-  if (!is.null(col_annotate)){
-    da_results = annotateNhoods(sce_milo, da_results, coldata_col = col_annotate)
-  }
-  da_results = da_results[order(da_results$Nhood) , ]
-  return(da_results)
+  summed = summarizeAssayByGroup(counts(sce), colData(sce)[,c("sample","type")])
+  y <- DGEList(assay(summed, "sum"), samples=colData(summed), lib.size = colSums(assay(summed , "sum")))
+  y <- calcNormFactors(y)
+  design <- model.matrix(~ factor(type), y$samples)
+  y <- estimateDisp(y, design)
+  fit <- glmQLFit(y, design, robust=TRUE)
+  res <- glmQLFTest(fit, coef=ncol(design))
+  out = topTags(res, n = Inf )
+  out = as.data.frame(out)
+  out = rownames_to_column(out , var = "ENSEMBL")
+  out = out[out$ENSEMBL %in% genes , ]
+  return(out)
 }
 
-
-add_stat = function(sce_milo){
-  stat_da = add_da(sce_milo , reducedDim_name = "scVI" , sample_id = "sample", condition_id = "type", col_annotate = NULL)
-  stat_da = stat_da[, c("Nhood", "logFC" , "SpatialFDR" )]
-  colnames(stat_da) = c("Nhood", "logFC_DA" , "SpatialFDR_DA" )
-  
-  nhoods_sce = nhoods(sce_milo)
-  nhood_stat = data.frame(Nhood = 1:ncol(nhoods_sce) , 
-                          n_hoods = ncol(nhoods_sce),
-                          avg_hood_size = mean(colSums(nhoods_sce)),
-                          hood_size = colSums(nhoods_sce)
-                          )
-  stat_da = merge(stat_da , nhood_stat , all.x = T , all.y = F)
-  stat_da = annotateNhoods(sce_milo, stat_da, coldata_col = "celltype")
-  stat_da = annotateNhoods(sce_milo, stat_da, coldata_col = "sub_celltype")
-  return(stat_da)
-}
 
 
 ```
 
-# Run miloDE
+# Run bulkDE
 
-```{r milo-de, message = FALSE}
+```{r bulk-de, message = FALSE}
 
 
-stat = lapply(1:nrow(anno) , function(i){
-  proc.file = paste0(root.dir ,  "data/processed/simulations/proc/" , anno$order[i] , "_k_" , anno$k[i] , "_round_" , anno$round[i], ".Rds")
-  if (!file.exists(proc.file)){
-    out.proc = 1
-    saveRDS(out.proc , paste0(root.dir ,  "data/processed/simulations/proc/" , anno$order[i] , "_k_" , anno$k[i] , "_round_" , anno$round[i], ".Rds"))
-    sce_milo = readRDS(paste0(root.dir ,  "data/processed/simulations/sce_milo/" ,"sce_order_", anno$order[i] , "_k_" , anno$k[i] , "_round_" , anno$round[i], ".Rds"))
-  
-    rowdata = as.data.frame(rowData(sce_milo))
-  
-    stat_de = miloDE::de_test_neighbourhoods(sce_milo , design = ~type , covariates = c("type") , 
-                                             min_count = 0 , min_n_cells_per_sample = 1 , BPPARAM = mcparam)
-    colnames(stat_de)[colnames(stat_de) == "gene"] = "ENSEMBL"
-    stat_de = merge(stat_de , rowdata , all.x = T)
-    
-    milo_stat = add_stat(sce_milo)
-    stat_de = merge(stat_de , milo_stat , all.x = T)
-    
-    stat_de = cbind(stat_de , anno[i , ])
-    
-    stat_de = stat_de[stat_de$ENSEMBL %in% simulated_genes$ENSEMBL , ]
-    saveRDS(stat_de , file = paste0(root.dir ,  "data/processed/simulations/milo_de_selected/" ,"milo_de_order_", anno$order[i] , "_k_" , anno$k[i] , "_round_" , anno$round[i], ".Rds"))
-    
-    return(NULL)
-  }
-  else{
-    return(NULL)
-  }
+
+stat = lapply(1:length(sces) , function(i){
+  print(i)
+  sce = sces[[i]]
+  out_all = get_bulk_de(sce , genes = simulated_genes$ENSEMBL)
+  out_all = out_all[, c("ENSEMBL" , "logFC" , "PValue" , "FDR")]
+  colnames(out_all) = c("ENSEMBL" , "logFC_bulk_all" , "PValue_bulk_all" , "FDR_bulk_all")
+  out_clusters = get_bulk_de(sce , clusters = cluster_splits[[i]] , genes = simulated_genes$ENSEMBL)
+  out_clusters = out_clusters[, c("ENSEMBL" , "logFC" , "PValue" , "FDR")]
+  colnames(out_clusters) = c("ENSEMBL" , "logFC_bulk_clusters" , "PValue_bulk_clusters" , "FDR_bulk_clusters")
+  out = merge(out_all , out_clusters)
+  return(out)
 })
+saveRDS(stat , file = paste0(root.dir , "data/processed/simulations/brain/bulk_de_stat.Rds"))
+
 
 
 

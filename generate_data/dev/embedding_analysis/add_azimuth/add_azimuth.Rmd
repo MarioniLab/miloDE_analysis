@@ -1,5 +1,5 @@
 ---
-title: "Assign neighbourhoods and miloDE for different embeddings."
+title: "Add Azimuth embedding to WT-chimera ds"
 output:
   BiocStyle::html_document:
     code_folding: hide
@@ -12,69 +12,145 @@ output:
 
 
 library(SingleCellExperiment)
-library(miloDE)
-library(miloR)
 library(BiocParallel)
-library(ggplot2)
-library(ggpubr)
-library(geneBasisR)
-library(MouseGastrulationData)
 library(scran)
-library(MetBrewer)
+library(batchelor)
+library(Seurat)
+library(SeuratObject)
 
-ncores = 15
+ncores = 6
 mcparam = MulticoreParam(workers = ncores)
 register(mcparam)
 set.seed(32)
 
 root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+source(paste0(root.dir , "miloDE_analysis/core_functions.R"))
 
-# load sce with embedding
-sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/chimera/mouse_embryo_chimera_tal.Rds"))
-# subselect for TAL1+ cells
-sce = sce[, sce$tal1 == 1]
-sce$type = sapply(sce$type , function(x) ifelse(x == "wt" , "WT" , "ChimeraWT"))
-sce$type = factor(sce$type , levels = c("WT" , "ChimeraWT"))
+# load sce 
+sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/mouse_embryo_wt_chimera.Rds"))
 
-rowdata = as.data.frame(rowData(sce))
-genes_chimera_specific = c("Rpgrip1" , "Slc24a5" , "Cbx3" )
+# load genes
+genes_wt = read.csv(paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/HVGs/wt.csv") , row.names = 1)
+genes_all = read.csv(paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/HVGs/all.csv") , row.names = 1)
 
-```
-
-# Assign neighbourhoods
-
-```{r assign-nhoods, message = FALSE}
-
-
-sce_milo = bplapply(embeddings , function(embedding){
- print(embedding)
- current.sce = miloDE::assign_neighbourhoods(sce , reducedDim_name = embedding , k = 100, prop = 0.2 , order = 1, filtering = T)
- return(current.sce)
-} , BPPARAM = mcparam)
-names(sce_milo) = embeddings
-saveRDS(sce_milo , file = paste0(root.dir , "data/processed/embedding_analysis/sce_milo.Rds"))
-
+genes = list(all = genes_all$HVG , wt = genes_wt$HVG)
 
 
 ```
 
-# DE stat
+# Define functions
 
-```{r de-stat, message = FALSE}
-
-
-sce_milo = readRDS(paste0(root.dir , "data/processed/embedding_analysis/sce_milo.Rds"))
-de_stat = lapply(1:length(sce_milo) , function(i){
-  out = miloDE::de_test_neighbourhoods(sce_milo[[i]] , design = ~type , covariates = c("type") , min_count = 0 , 
-	min_n_cells_per_sample = 1 , BPPARAM = mcparam , output_type = "data.frame")
-  out = out[out$gene %in% rowdata$ENSEMBL[rowdata$SYMBOL %in% genes_chimera_specific] , ]
-  out$embedding = embeddings[i]
-  return(out)
-})
-de_stat = do.call(rbind , de_stat)  
-saveRDS(de_stat , file = paste0(root.dir , "data/processed/embedding_analysis/milo_de_stat.Rds"))
+```{r funcs, message = FALSE}
 
 
+add_azimuth_supervised = function(sce , genes , split.by = "sample", ref_samples , query_samples, nPC = 30, reducedDim.name , bpparam){
+  require(Seurat)
+  require(SeuratObject)
+  require(SingleCellExperiment)
+  sce_seurat <- CreateSeuratObject(counts = counts(sce[genes,]))
+  sce_seurat@assays$RNA@data = logcounts(sce[genes,])
+  sce_seurat = AddMetaData(sce_seurat, as.data.frame(colData(sce)), col.name = NULL)
+  sce_seurat.list <- SplitObject(sce_seurat, split.by = split.by)
+  # normalise and hvgs
+  for (i in 1:length(sce_seurat.list)) {
+    VariableFeatures(sce_seurat.list[[i]]) = genes
+  }
+  sce_reference.list = sce_seurat.list[ref_samples]
+  # integrate reference
+  ref_anchors <- FindIntegrationAnchors(object.list = sce_reference.list, anchor.features = genes, dims = 1:nPC , reduction = "cca")
+  sce_reference.integrated <- IntegrateData(anchorset = ref_anchors, dims = 1:nPC)
+  DefaultAssay(sce_reference.integrated) <- "integrated"
+  sce_reference.integrated <- ScaleData(sce_reference.integrated, verbose = FALSE)
+  sce_reference.integrated <- RunPCA(sce_reference.integrated, npcs = nPC, verbose = FALSE)
+  
+  # map query
+  pca_proj_query = bplapply(query_samples , function(current.sample){
+    current.sce = sce_seurat.list[[which(names(sce_seurat.list) == current.sample)]]
+    query_anchors <- FindTransferAnchors(reference = sce_reference.integrated, query = current.sce,
+                                         dims = 1:nPC, reference.reduction = "pca")
+    predictions <- TransferData(anchorset = query_anchors, refdata = t(Embeddings(sce_reference.integrated[['pca']])), dims = 1:nPC)
+    predictions = predictions[1:nrow(predictions), 1:ncol(predictions)]
+    current.sce[["pca"]] <- CreateDimReducObject(embeddings = t(as.matrix(predictions)), key = "PC_", assay = DefaultAssay(current.sce))
+    current.sce = as.SingleCellExperiment(current.sce)
+    out = reducedDim(current.sce , "PCA")
+    colnames(out) = paste0("PC_" , c(1:nPC))
+    return(out)
+  } , BPPARAM = bpparam)
+
+  # combine
+  pca_proj_query = do.call(rbind , pca_proj_query)
+  sce_reference.integrated = as.SingleCellExperiment(sce_reference.integrated)
+  pca_ref = reducedDim(sce_reference.integrated , "PCA")
+  colnames(pca_ref) = paste0("PC_" , c(1:nPC))
+  pca_joint = rbind(pca_proj_query , pca_ref)
+  pca_joint = pca_joint[order(rownames(pca_joint)) , ]
+  sce = sce[, order(colnames(sce))]
+  reducedDim(sce , reducedDim.name) = pca_joint
+  return(sce)
+}
+
+
+
+add_azimuth_unsupervised = function(sce , genes , split.by = "sample", nPC = 30, reducedDim.name){
+  require(Seurat)
+  require(SeuratObject)
+  require(SingleCellExperiment)
+  sce_seurat <- CreateSeuratObject(counts = counts(sce[genes,]))
+  sce_seurat@assays$RNA@data = logcounts(sce[genes,])
+  sce_seurat = AddMetaData(sce_seurat, as.data.frame(colData(sce)), col.name = NULL)
+  sce_seurat.list <- SplitObject(sce_seurat, split.by = split.by)
+  # normalise and hvgs
+  for (i in 1:length(sce_seurat.list)) {
+    VariableFeatures(sce_seurat.list[[i]]) = genes
+  }
+  
+  # integrate
+  anchors <- FindIntegrationAnchors(object.list = sce_seurat.list, anchor.features = genes, dims = 1:nPC , reduction = "cca")
+  sce_seurat.integrated <- IntegrateData(anchorset = anchors, dims = 1:nPC)
+  DefaultAssay(sce_seurat.integrated) <- "integrated"
+  sce_seurat.integrated <- ScaleData(sce_seurat.integrated, verbose = FALSE)
+  sce_seurat.integrated <- RunPCA(sce_seurat.integrated, npcs = nPC, verbose = FALSE)
+  
+  # assign pca
+  sce_seurat.integrated = as.SingleCellExperiment(sce_seurat.integrated)
+  pcs = reducedDim(sce_seurat.integrated , "PCA")
+  colnames(pcs) = paste0("PC_" , c(1:nPC))
+  
+  # order
+  pcs = pcs[order(rownames(pcs)) , ]
+  sce = sce[, order(colnames(sce))]
+  reducedDim(sce , reducedDim.name) = pcs
+  return(sce)
+}
+
+
+
+```
+
+# Run Azimuth
+
+```{r run-mnn, message = FALSE}
+
+
+anno = expand.grid(genes = c("wt" , "all") , embedding = c("supervised" , "unsupervised"))
+anno$genes = as.character(anno$genes)
+anno$embedding = as.character(anno$embedding)
+
+ref_samples = unique(sce$sample[sce$type == "wt"])
+query_samples = unique(sce$sample[!sce$type == "wt"])
+
+
+for (i in 1:nrow(anno)){
+  current.genes = genes[[which(names(genes) == anno$genes[i])]]
+  if (anno$embedding[i] == "supervised"){
+    sce = add_azimuth_supervised(sce, genes = current.genes, ref_samples = ref_samples , query_samples = query_samples , reducedDim.name = paste0("azimuth_supervised_" , anno$genes[i]) , bpparam = mcparam)
+  } else {
+    sce = add_azimuth_unsupervised(sce, genes = current.genes, reducedDim.name = paste0("azimuth_unsupervised_" , anno$genes[i]))
+  }
+}
+
+saveRDS(sce , paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/mouse_embryo_wt_chimera.Rds"))  
+  
 
 ```
 

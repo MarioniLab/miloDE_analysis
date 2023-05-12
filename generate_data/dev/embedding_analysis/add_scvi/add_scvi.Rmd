@@ -1,5 +1,5 @@
 ---
-title: "Assign neighbourhoods and miloDE for different embeddings."
+title: "Add scvi embeddings."
 output:
   BiocStyle::html_document:
     code_folding: hide
@@ -15,68 +15,54 @@ library(SingleCellExperiment)
 library(miloDE)
 library(miloR)
 library(BiocParallel)
-library(ggplot2)
-library(ggpubr)
-library(geneBasisR)
-library(MouseGastrulationData)
-library(scran)
-library(MetBrewer)
 
-ncores = 15
+ncores = 1
 mcparam = MulticoreParam(workers = ncores)
 register(mcparam)
 set.seed(32)
 
 root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
 
-# load sce with embedding
-sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/chimera/mouse_embryo_chimera_tal.Rds"))
-# subselect for TAL1+ cells
-sce = sce[, sce$tal1 == 1]
-sce$type = sapply(sce$type , function(x) ifelse(x == "wt" , "WT" , "ChimeraWT"))
-sce$type = factor(sce$type , levels = c("WT" , "ChimeraWT"))
-
-rowdata = as.data.frame(rowData(sce))
-genes_chimera_specific = c("Rpgrip1" , "Slc24a5" , "Cbx3" )
-
-```
-
-# Assign neighbourhoods
-
-```{r assign-nhoods, message = FALSE}
-
-
-sce_milo = bplapply(embeddings , function(embedding){
- print(embedding)
- current.sce = miloDE::assign_neighbourhoods(sce , reducedDim_name = embedding , k = 100, prop = 0.2 , order = 1, filtering = T)
- return(current.sce)
-} , BPPARAM = mcparam)
-names(sce_milo) = embeddings
-saveRDS(sce_milo , file = paste0(root.dir , "data/processed/embedding_analysis/sce_milo.Rds"))
-
+# load sce 
+sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/mouse_embryo_wt_chimera.Rds"))
 
 
 ```
 
-# DE stat
+# Add scvi
 
-```{r de-stat, message = FALSE}
+```{r add-scvi, message = FALSE}
 
 
-sce_milo = readRDS(paste0(root.dir , "data/processed/embedding_analysis/sce_milo.Rds"))
-de_stat = lapply(1:length(sce_milo) , function(i){
-  out = miloDE::de_test_neighbourhoods(sce_milo[[i]] , design = ~type , covariates = c("type") , min_count = 0 , 
-	min_n_cells_per_sample = 1 , BPPARAM = mcparam , output_type = "data.frame")
-  out = out[out$gene %in% rowdata$ENSEMBL[rowdata$SYMBOL %in% genes_chimera_specific] , ]
-  out$embedding = embeddings[i]
-  return(out)
-})
-de_stat = do.call(rbind , de_stat)  
-saveRDS(de_stat , file = paste0(root.dir , "data/processed/embedding_analysis/milo_de_stat.Rds"))
+add_scvi = function(file){
+  current.scvi = read.csv(paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/scvi/" , file) , row.names = 1)
+  colnames(current.scvi) = paste0("scvi_" , c(1:ncol(current.scvi)))
+  
+  current.scvi = current.scvi[order(rownames(current.scvi)) , ]
+  sce = sce[ , order(colnames(sce))]
+  print(mean(colnames(sce) == rownames(current.scvi)))
+  
+  save.name = str_remove(file , ".csv")
+  reducedDim(sce , save.name) = current.scvi
+  return(sce)
+}
+
+
+files = list.files(paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/scvi/"))
+files = files[which(gdata::startsWith(files , "scvi"))]
+
+
+for (file in files){
+  sce = add_scvi(file)
+}
+
+reducedDimNames(sce)
+saveRDS(sce , paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/mouse_embryo_wt_chimera.Rds"))
 
 
 
 ```
+
 
 # Session Info
 

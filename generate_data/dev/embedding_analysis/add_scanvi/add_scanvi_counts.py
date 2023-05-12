@@ -15,6 +15,7 @@ device = torch.device("cuda")
 parser = argparse.ArgumentParser()
 group = parser.add_mutually_exclusive_group()
 parser.add_argument("hvg_file", help="hvg_file")
+args = parser.parse_args()
 
 # load adata
 root_dir = '/nfs/research/marioni/alsu/hubmap_metaRef/'
@@ -32,9 +33,9 @@ adata = adata[:, adata.var_names.isin(genes)]
 def _train_model(adata, labels_key='celltype', batch_col=None , n_layers=2):
     # assign batch if provided
     if batch_col is None:
-        adata_ref.obs['batch'] = '1'
+        adata.obs['batch'] = '1'
     else:
-        adata_ref.obs['batch'] = adata_ref.obs[batch_col].copy()
+        adata.obs['batch'] = adata.obs[batch_col].copy()
 
     # set up model    
     scvi.model.SCVI.setup_anndata(adata, batch_key="batch", layer='counts')

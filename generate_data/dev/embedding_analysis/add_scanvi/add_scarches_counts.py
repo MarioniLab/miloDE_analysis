@@ -7,6 +7,7 @@ import pandas as pd
 import scvi
 import torch
 import argparse
+import anndata
 
 #import argparse
 device = torch.device("cuda")
@@ -15,12 +16,19 @@ device = torch.device("cuda")
 parser = argparse.ArgumentParser()
 group = parser.add_mutually_exclusive_group()
 parser.add_argument("hvg_file", help="hvg_file")
+args = parser.parse_args()
 
 # load adata
 root_dir = '/nfs/research/marioni/alsu/hubmap_metaRef/'
 adata = sc.read_h5ad(root_dir + 'data/sces/mouse_embryo/chimera_WT/mouse_embryo_wt_chimera' + '.h5ad')
 adata.obs['sample'] = adata.obs['sample'].astype("category")
 adata.layers["counts"] = adata.X
+
+# we will change celltypes only present in chimera to Unknown
+chimera_mask = adata.obs['type'] == 'chimera'
+wt_mask = adata.obs['type'] == 'wt'
+celltypes_2_change = set(adata[chimera_mask, :].obs['celltype']) - set(adata[wt_mask, :].obs['celltype'])
+adata.obs['celltype'] = adata.obs['celltype'].apply(lambda x: 'Unknown' if x in celltypes_2_change else x)
 
 # get genes
 df = pd.read_csv(root_dir + 'data/sces/mouse_embryo/chimera_WT/HVGs/'+ args.hvg_file + '.csv')
@@ -75,7 +83,7 @@ def _fit_model(adata_query, lvae_ref, batch_col=None):
 
     lvae_q.train(max_epochs=200, plan_kwargs=dict(weight_decay=0.0),check_val_every_n_epoch=10)
     adata_query.obsm["X_scANVI"] = lvae_q.get_latent_representation()
-    return(vae_q)
+    return(lvae_q)
 
 
 # split data: first sn to sce

@@ -10,7 +10,7 @@ script_name=mi_emb
 
 #CHOOSE PARAMETERS
 #RAM in megabytes
-memory=700000
+memory=800000
 r_command="rusage[mem=${memory}]"
 #num_processors
 nproc=1
