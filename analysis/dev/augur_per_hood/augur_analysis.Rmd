@@ -52,6 +52,27 @@ ggsave(filename = paste0(figures.dir, "augur/main_stat" ,".png"), plot = p, widt
 
 ```
 
+## Only one lfc
+
+```{r plot-augur-one-lfc, message = FALSE}
+
+
+cols_batch = c("darkslategray3" , "hotpink3" , "lightpink")
+names(cols_batch) = c("no_batch" , "batch_misbalanced" , "batch_balanced")
+  
+p = ggplot(stat_augur[stat_augur$de_facLoc == 1 , ] , aes(x = factor(de_prob) , y = auc , fill = factor(batch))) + 
+  geom_boxplot() + 
+  theme_bw() + 
+  scale_fill_manual(values = cols_batch , name = "batch") +
+  geom_hline(yintercept = 0.5 , "linetype" = "dashed" , color = "red") + 
+  theme(legend.position = "none") + 
+  labs(x = "" , y = "")
+p
+ggsave(filename = paste0(figures.dir, "augur/main_stat_one_lfc" ,".png"), plot = p, width = 5, height = 3)
+
+
+
+```
 
 # Session Info
 
