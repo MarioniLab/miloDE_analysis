@@ -1,0 +1,192 @@
+---
+title: "Select genes and simulate counts to immitate ground truth DE."
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+```{r load, message = FALSE}
+
+
+library(SingleCellExperiment)
+library(miloR)
+library(BiocParallel)
+library(ggplot2)
+library(ggpubr)
+library(splatter)
+library(scran)
+library(MetBrewer)
+library(viridis)
+ncores = 6
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+set.seed(32)
+
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+#root.dir = "/Users/alsu/Develop/hubmap_metaRef/"
+source(paste0(root.dir , "am_hubmapMetaRef/functions/core_functions.R"))
+source(paste0(root.dir , "am_hubmapMetaRef/functions/milo_functions.R"))
+
+
+# load sce with embedding
+sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/mouse_embryo_wt_chimera.Rds"))
+# subset for brain cells
+sce = sce[, sce$celltype == "Forebrain/Midbrain/Hindbrain"]
+
+rowdata = as.data.frame(rowData(sce))
+rowdata$n_cells_expressed = as.numeric( apply(counts(sce) , 1 , function(x) sum(x > 0)) )
+rowdata$avg_expr = round( rowMeans(logcounts(sce)) , 1 )
+
+
+```
+
+# Cluster brain cells
+
+```{r cluster-braon-cells, message = FALSE}
+
+
+umaps = as.data.frame( scater::calculateUMAP(t(reducedDim(sce , "scvi_supervised_wt"))) )
+
+set.seed(32)
+
+snn_graph = buildSNNGraph(reducedDim(sce , "scvi_supervised_wt"), k = 20 , d = 10 , transposed = T)
+clusters = cluster_louvain(snn_graph)  
+sce$cluster = as.character(clusters$membership)
+saveRDS(sce , file = paste0(root.dir , "data/processed/simulations/brain/sce_w_clusters.Rds"))
+
+umaps_ext = cbind(umaps , as.data.frame(colData(sce)))
+
+p = ggplot(umaps_ext , aes(x = V1 , y = V2 , col = factor(cluster))) +
+  geom_point() +
+  theme_bw()
+p
+
+
+
+```
+
+# Get cluster split
+
+```{r cluster-split, message = FALSE}
+
+cluster_splits = list(c(8) , c(3) , c(5) ,c(1,7) ,  c(5,8) , c(3,6)  , c(3,2,6) , c(1,4,5,7) , c(1,4,5,7,2) , c(1,2,3,4,5,6,7))
+
+stat = lapply(1:length(cluster_splits) , function(i){
+  out = mean(sce$cluster %in% cluster_splits[[i]])
+  print(out)
+})
+
+```
+
+# Get genes that are not de in major CTs
+
+```{r get-no-de-genes, message = FALSE}
+
+
+
+get_no_de_genes = function(cluster , pval.thresh = 0.1 ){
+  require(tibble)
+  current.sce = sce[, sce$cluster == cluster]
+  summed = summarizeAssayByGroup(counts(current.sce), colData(current.sce)[,c("sample","type")])
+  y <- DGEList(assay(summed, "sum"), samples=colData(summed), lib.size = colSums(assay(summed , "sum")))
+  y <- calcNormFactors(y)
+  design <- model.matrix(~ factor(type), y$samples)
+  y <- estimateDisp(y, design)
+  fit <- glmQLFit(y, design, robust=TRUE)
+  res <- glmQLFTest(fit, coef=ncol(design))
+  out = topTags(res, n = Inf )
+  out = as.data.frame(out)
+  out = rownames_to_column(out , var = "ENSEMBL")
+  out = out[out$PValue >= pval.thresh  , ]
+  out$cluster = cluster
+  return(out)
+}
+
+
+no_de_genes = bplapply(unique(sce$cluster) , function(cluster){
+  out = get_no_de_genes(cluster , pval.thresh = 0.2) 
+  return(out)
+} , BPPARAM = mcparam)
+no_de_genes = do.call(rbind , no_de_genes)
+no_de_genes = as.data.frame(no_de_genes %>% group_by(ENSEMBL) %>% dplyr::summarise(n_clusters = n()))
+no_de_genes = no_de_genes[no_de_genes$n_clusters == length(unique(sce$cluster)) , ]
+no_de_genes = merge(no_de_genes , rowdata , all.x = T , all.y = F)
+
+
+table(no_de_genes$avg_expr)
+
+
+
+```
+
+# Get candidate genes
+
+```{r get-candidate-genes, message = FALSE}
+
+
+K = 5
+candidate_genes = lapply(unique(no_de_genes$avg_expr) , function(avg_expr){
+  current.genes = no_de_genes$ENSEMBL[no_de_genes$avg_expr == avg_expr]
+  current.genes = sample(current.genes , min(K , length(current.genes))) 
+  return(current.genes)
+})
+candidate_genes = unlist(candidate_genes)
+
+genes_2_simulate = data.frame(ENSEMBL = candidate_genes)
+genes_2_simulate$range = sample(c(1,2,3), nrow(genes_2_simulate) , replace = T)
+genes_2_simulate$frac_2_change = sample(c(1), nrow(genes_2_simulate) , replace = T)
+genes_2_simulate = merge(genes_2_simulate , rowdata[, c("ENSEMBL" , "SYMBOL")] , all.x = T , all.y = F)
+
+saveRDS(genes_2_simulate , file = paste0(root.dir , "data/processed/simulations/brain/simulated_genes.Rds"))
+
+
+
+```
+
+# Add simulated counts
+
+```{r add-sim-counts, message = FALSE}
+
+
+
+add_simulated_counts <- function(sce, clusters = clusters, gene, frac_cells_change, range){
+  counts = counts(sce)
+  current.counts = counts[gene, ]
+  idx_2_change = which(sce$type == "chimera" & sce$cluster %in% clusters)
+  idx_2_change = sample(idx_2_change , round(length(idx_2_change)*frac_cells_change))
+  current.counts[idx_2_change] = current.counts[idx_2_change] + floor(runif(length(idx_2_change), min=range[1], max=(range[2]+1)))
+    
+  counts[gene, ] = current.counts
+  counts(sce) = counts
+  return(sce)
+}
+
+
+sces = bplapply(cluster_splits , function(clusters){
+  sce_simulated = sce
+  for (i in 1:nrow(genes_2_simulate)){
+    sce_simulated = add_simulated_counts(sce_simulated, clusters = clusters, 
+                             gene = genes_2_simulate$ENSEMBL[i], 
+                             range = c(0 , genes_2_simulate$range[i]) , 
+                             frac_cells_change = genes_2_simulate$frac_2_change[i])
+  
+  }
+  sce_simulated = scuttle::logNormCounts(sce_simulated)
+  return(sce_simulated)
+} , BPPARAM = mcparam)
+saveRDS(sces , file = paste0(root.dir , "data/processed/simulations/brain/sces_simulated.Rds"))
+
+
+
+```
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```
