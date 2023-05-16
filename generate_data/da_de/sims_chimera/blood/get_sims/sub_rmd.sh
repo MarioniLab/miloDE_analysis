@@ -17,7 +17,7 @@ nproc=20
 
 
 smg=/hps/software/users/marioni/alsu/singularity/alsu_miloDE.simg
-script=/nfs/research/marioni/alsu/hubmap_metaRef/miloDE_analysis/generate_data/da_de/sims_chimera/get_sims/run_rmd.R
+script=/nfs/research/marioni/alsu/hubmap_metaRef/miloDE_analysis/generate_data/da_de/sims_chimera/blood/get_sims/run_rmd.R
 
 bsub -q bigmem -e ${err_folder}/${script_name} \
 -o ${out_folder}/${script_name} \
