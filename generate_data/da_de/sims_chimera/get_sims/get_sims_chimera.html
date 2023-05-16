@@ -791,9 +791,14 @@ function toggle_visibility(id1) {
 <div id="TOC">
 <ul>
 <li><a href="#load-dependencies" id="toc-load-dependencies"><span class="toc-section-number">1</span> Load dependencies</a></li>
-<li><a href="#estimate-parameters" id="toc-estimate-parameters"><span class="toc-section-number">2</span> Estimate parameters</a></li>
-<li><a href="#set-parameter-space" id="toc-set-parameter-space"><span class="toc-section-number">3</span> Set parameter space</a></li>
-<li><a href="#generate-datsets" id="toc-generate-datsets"><span class="toc-section-number">4</span> Generate datsets</a></li>
+<li><a href="#load-data" id="toc-load-data"><span class="toc-section-number">2</span> Load data</a></li>
+<li><a href="#get-genes-for-de-da" id="toc-get-genes-for-de-da"><span class="toc-section-number">3</span> Get genes for DE-DA</a>
+<ul>
+<li><a href="#blood-markers" id="toc-blood-markers"><span class="toc-section-number">3.1</span> Blood markers</a></li>
+<li><a href="#not-de-genes" id="toc-not-de-genes"><span class="toc-section-number">3.2</span> not DE genes</a></li>
+<li><a href="#get-several-gene-combinations" id="toc-get-several-gene-combinations"><span class="toc-section-number">3.3</span> Get several gene combinations</a></li>
+</ul></li>
+<li><a href="#add-simulated-counts" id="toc-add-simulated-counts"><span class="toc-section-number">4</span> Add simulated counts</a></li>
 <li><a href="#session-info" id="toc-session-info"><span class="toc-section-number">5</span> Session Info</a></li>
 </ul>
 </div>
@@ -805,111 +810,121 @@ library(BiocParallel)
 library(geneBasisR)
 library(splatter)
 library(scran)
-ncores = 15
+library(miloR)
+library(miloDE)
+library(dplyr)
+library(tibble)
+
+ncores = 20
 mcparam = MulticoreParam(workers = ncores)
 register(mcparam)
 set.seed(32)
 
 root.dir = &quot;/nfs/research/marioni/alsu/hubmap_metaRef/&quot;
-source(paste0(root.dir , &quot;miloDE_analysis/core_functions.R&quot;))</code></pre>
+source(paste0(root.dir , &quot;miloDE_analysis/core_functions.R&quot;))
+source(paste0(root.dir , &quot;am_hubmapMetaRef/functions/milo_functions.R&quot;))</code></pre>
 </div>
-<div id="estimate-parameters" class="section level1" number="2">
-<h1><span class="header-section-number">2</span> Estimate parameters</h1>
-<pre class="r"><code>sce = readRDS(paste0(root.dir , &quot;data/sces/mouse_embryo/WT/mouse_embryo_E8.5.Rds&quot;))
-sce = sce[, sce$sample == 17]
-sce = logNormCounts(sce)
-sce = retain_informative_genes(sce , n = 2000)
-counts(sce) = as.matrix(counts(sce))
+<div id="load-data" class="section level1" number="2">
+<h1><span class="header-section-number">2</span> Load data</h1>
+<pre class="r"><code># load sce with embedding
+sce = readRDS(paste0(root.dir , &quot;data/sces/mouse_embryo/chimera_WT/mouse_embryo_wt_chimera.Rds&quot;))
+# will only work with blood cells
+sce = sce[ , sce$celltype %in% c(&quot;Erythroid2&quot; , &quot;Erythroid3&quot;)]
+rowdata = as.data.frame(rowData(sce))
+rowdata$n_cells_expressed = as.numeric( apply(counts(sce) , 1 , function(x) sum(x &gt; 0)) )</code></pre>
+<pre><code>## Warning in asMethod(object): sparse-&gt;dense coercion: allocating vector of size
+## 1.6 GiB</code></pre>
+<pre class="r"><code>rowdata$avg_expr = round( rowMeans(logcounts(sce)) , 1 )</code></pre>
+</div>
+<div id="get-genes-for-de-da" class="section level1" number="3">
+<h1><span class="header-section-number">3</span> Get genes for DE-DA</h1>
+<div id="blood-markers" class="section level2" number="3.1">
+<h2><span class="header-section-number">3.1</span> Blood markers</h2>
+<pre class="r"><code>markers = scran::findMarkers(sce , groups = sce$celltype)
+markers = as.data.frame(markers[[1]])
+markers = markers[markers$FDR &lt; 0.01 &amp; markers$summary.logFC &lt; -0.5, c(&quot;p.value&quot; , &quot;FDR&quot; , &quot;summary.logFC&quot;)]
+markers = tibble::rownames_to_column(markers , var = &quot;ENSEMBL&quot;)
+markers = merge(markers , rowdata , all.x = T , all.y = F)
+markers = markers$ENSEMBL</code></pre>
+</div>
+<div id="not-de-genes" class="section level2" number="3.2">
+<h2><span class="header-section-number">3.2</span> not DE genes</h2>
+<pre class="r"><code>get_no_de_genes = function(celltype , pval.thresh = 0.1 ){
+  require(tibble)
+  current.sce = sce[, sce$celltype == celltype]
+  summed = summarizeAssayByGroup(counts(current.sce), colData(current.sce)[,c(&quot;sample&quot;,&quot;type&quot;)])
+  y &lt;- DGEList(assay(summed, &quot;sum&quot;), samples=colData(summed), lib.size = colSums(assay(summed , &quot;sum&quot;)))
+  y &lt;- calcNormFactors(y)
+  design &lt;- model.matrix(~ factor(type), y$samples)
+  y &lt;- estimateDisp(y, design)
+  fit &lt;- glmQLFit(y, design, robust=TRUE)
+  res &lt;- glmQLFTest(fit, coef=ncol(design))
+  out = topTags(res, n = Inf )
+  out = as.data.frame(out)
+  out = rownames_to_column(out , var = &quot;ENSEMBL&quot;)
+  out = out[out$PValue &gt;= pval.thresh  , ]
+  out$celltype = celltype
+  return(out)
+}
 
-params = splatEstimate( sce )</code></pre>
-</div>
-<div id="set-parameter-space" class="section level1" number="3">
-<h1><span class="header-section-number">3</span> Set parameter space</h1>
-<pre class="r"><code>n_cells_total = c(8000)
-n_batches = c(2)
-group_prob = c(0.5)
-de_prob = c(0, 0.0025 , 0.01 , 0.05 , 0.1 , 0.5)
-de_facLoc = c(0.75 , 1.5 , 3 , 6)
-batch = c(FALSE)
-round = c(1:3)
 
-anno = expand.grid(n_cells_total = n_cells_total , n_batches = n_batches,  group_prob = group_prob , de_prob = de_prob, de_facLoc = de_facLoc , batch = batch , round = round)
-anno = unique(anno)
-anno$id = paste0(anno$batch , &quot;_&quot; , anno$de_prob , &quot;_&quot; , anno$de_facLoc , &quot;_&quot; , anno$round)</code></pre>
+no_de_genes = lapply(unique(sce$celltype) , function(celltype){
+  out = get_no_de_genes(celltype , pval.thresh = 0.5) 
+  return(out)
+})
+no_de_genes = do.call(rbind , no_de_genes)
+no_de_genes = as.data.frame(no_de_genes %&gt;% group_by(ENSEMBL) %&gt;% dplyr::summarise(n_celltypes = n()))
+no_de_genes = no_de_genes[no_de_genes$n_celltypes == length(unique(sce$celltype)) , ]
+no_de_genes = merge(no_de_genes , rowdata , all.x = T , all.y = F)
+
+K = 5
+candidate_no_de_genes = lapply(unique(no_de_genes$avg_expr)[unique(no_de_genes$avg_expr) &lt; 4] , function(avg_expr){
+  current.genes = no_de_genes$ENSEMBL[no_de_genes$avg_expr == avg_expr]
+  current.genes = sample(current.genes , min(K , length(current.genes))) 
+  return(current.genes)
+})
+candidate_no_de_genes = unlist(candidate_no_de_genes)</code></pre>
 </div>
-<div id="generate-datsets" class="section level1" number="4">
-<h1><span class="header-section-number">4</span> Generate datsets</h1>
-<pre class="r"><code>add_batch_corrected_pca = function(sce, genes , reduced.dim_name = &quot;pca.corrected&quot; , batch = &quot;sample&quot; , d = 30, bpparam = NULL , correct = T){
-  require(batchelor)
-  set.seed(32)
-  meta = as.data.frame(colData(sce))
-  batchFactor = factor(meta[, colnames(meta) == batch])
-  if (is.null(bpparam)){
-    set.seed(32)
-    mbpca = multiBatchPCA(sce[genes , ], batch = batchFactor, d = d)
-  }
-  else {
-    set.seed(32)
-    mbpca = multiBatchPCA(sce[genes , ], batch = batchFactor, d = d , BPPARAM = bpparam)
-  }
-  if (correct){
-    out = do.call(reducedMNN, mbpca)
-    joint.pca = out$corrected
-  }
-  else {
-    joint.pca = do.call(rbind , mbpca)
-  }
-  joint.pca = joint.pca[order(rownames(joint.pca)) , ]
-  sce = sce[, order(colnames(sce))]
-  reducedDim(sce , reduced.dim_name) = joint.pca
+<div id="get-several-gene-combinations" class="section level2" number="3.3">
+<h2><span class="header-section-number">3.3</span> Get several gene combinations</h2>
+<pre class="r"><code>anno = expand.grid(round = c(1:5) , n_markers = seq(2,length(markers) , 2))
+genes_2_simulate = lapply(1:nrow(anno) , function(i){
+  out = data.frame(ENSEMBL = c(sample(markers , anno$n_markers[i]) , sample(candidate_no_de_genes , (length(markers)-anno$n_markers[i]))))
+  out$range = sample(c(1,2,3), nrow(out) , replace = T)
+  out$frac_2_change = sample(c(1), nrow(out) , replace = T)
+  out = merge(out , rowdata[, c(&quot;ENSEMBL&quot; , &quot;SYMBOL&quot;)] , all.x = T , all.y = F)
+  return(out)
+})
+saveRDS(genes_2_simulate , file = paste0(root.dir , &quot;data/processed/da_de/simulations_chimera/blood/simulated_genes.Rds&quot;))</code></pre>
+</div>
+</div>
+<div id="add-simulated-counts" class="section level1" number="4">
+<h1><span class="header-section-number">4</span> Add simulated counts</h1>
+<pre class="r"><code>add_simulated_counts &lt;- function(sce, gene, frac_cells_change, range){
+  counts = counts(sce)
+  current.counts = counts[gene, ]
+  idx_2_change = which(sce$type == &quot;chimera&quot; &amp; sce$celltype %in% c(&quot;Erythroid2&quot;))
+  idx_2_change = sample(idx_2_change , round(length(idx_2_change)*frac_cells_change))
+  current.counts[idx_2_change] = current.counts[idx_2_change] + floor(runif(length(idx_2_change), min=range[1], max=(range[2]+1)))
+  counts[gene, ] = current.counts
+  counts(sce) = counts
   return(sce)
 }
 
 
-sims = bplapply(1:nrow(anno) , function(i){
-  print(i)
-  n_cells_total = anno$n_cells_total[i]
-  n_batches = anno$n_batches[i]
-  group_prob = c(anno$group_prob[i] , 1 - anno$group_prob[i])
-  de_prob = anno$de_prob[i]
-  de_facLoc = anno$de_facLoc[i]
-  batch = anno$batch[i]
-  round = anno$round[i]
-  n_cells_per_batch = rep(round(n_cells_total/n_batches) , 1 , n_batches)
-    
-  sim = splatSimulateGroups(params, group.prob = group_prob, de.prob = c(0,de_prob) , de.facLoc = de_facLoc , batchCells = n_cells_per_batch, verbose = FALSE,  out.prob = 0 , batch.rmEffect = !batch , de.downProb = 0)
-  sim$sample = paste0(sim$Batch , &quot;_&quot; , sim$Group)
+sces = bplapply(genes_2_simulate , function(current.genes_2_simulate){
+  sce_simulated = sce
+  for (i in 1:nrow(current.genes_2_simulate)){
+    sce_simulated = add_simulated_counts(sce_simulated, 
+                             gene = current.genes_2_simulate$ENSEMBL[i], 
+                             range = c(0 , current.genes_2_simulate$range[i]) , 
+                             frac_cells_change = current.genes_2_simulate$frac_2_change[i])
   
-  # discard unnecessary fields
-  sim = SingleCellExperiment(list(counts = counts(sim)), 
-                           colData = colData(sim) , rowData = rowData(sim))
-  # add logcounts
-  sim = scuttle::logNormCounts(sim)
-  rowdata = as.data.frame(rowData(sim))   
-  # add MNN embedding (w and wo DE genes)
-  sim = add_batch_corrected_pca(sim , genes = rowdata$Gene , reduced.dim_name = &quot;pca.all&quot; , d = 5)
-  sim = add_batch_corrected_pca(sim , genes = rowdata$Gene[rowdata$DEFacGroup2 == 1] , reduced.dim_name = &quot;pca.not_de&quot; , d = 5)
-  
-  # add coldata
-  sim$batch_effect = batch
-  sim$n_batches = n_batches
-  sim$de_prob = de_prob
-  sim$de_facLoc = de_facLoc
-  sim$round = round
-  
-  # delete logcounts
-  sim_reduced = SingleCellExperiment(list(counts = as(counts(sim) , &quot;dgCMatrix&quot;)) , 
-                                     colData = colData(sim) , rowData = rowData(sim))
-  colnames(sim_reduced) = colnames(sim)
-  rownames(sim_reduced) = rownames(sim)
-  
-  reducedDim(sim_reduced , &quot;pca.all&quot;) = reducedDim(sim , &quot;pca.all&quot;)
-  reducedDim(sim_reduced , &quot;pca.not_de&quot;) = reducedDim(sim , &quot;pca.not_de&quot;)
-  
-  return(sim_reduced)
+  }
+  sce_simulated = scuttle::logNormCounts(sce_simulated)
+  return(sce_simulated)
 } , BPPARAM = mcparam)
-names(sims) = anno$id
-saveRDS(sims , file = paste0(root.dir , &quot;data/processed/da_de/simulations_splatter/sims.Rds&quot;))</code></pre>
+saveRDS(sces , file = paste0(root.dir , &quot;data/processed/da_de/simulations_chimera/blood/sces_simulated.Rds&quot;))</code></pre>
 </div>
 <div id="session-info" class="section level1" number="5">
 <h1><span class="header-section-number">5</span> Session Info</h1>
@@ -935,74 +950,100 @@ saveRDS(sims , file = paste0(root.dir , &quot;data/processed/da_de/simulations_s
 ## [8] base     
 ## 
 ## other attached packages:
-##  [1] scran_1.26.2                scuttle_1.8.4              
-##  [3] splatter_1.22.1             geneBasisR_0.0.0.9000      
-##  [5] BiocParallel_1.32.6         SingleCellExperiment_1.20.1
-##  [7] SummarizedExperiment_1.28.0 Biobase_2.58.0             
-##  [9] GenomicRanges_1.50.2        GenomeInfoDb_1.34.9        
-## [11] IRanges_2.32.0              S4Vectors_0.36.2           
-## [13] BiocGenerics_0.44.0         MatrixGenerics_1.11.1      
-## [15] matrixStats_0.63.0          BiocStyle_2.26.0           
-## [17] rmarkdown_2.20             
+##  [1] tibble_3.2.0                dplyr_1.1.0                
+##  [3] miloDE_0.0.0.9000           miloR_1.6.0                
+##  [5] edgeR_3.40.2                limma_3.54.2               
+##  [7] scran_1.26.2                scuttle_1.8.4              
+##  [9] splatter_1.22.1             geneBasisR_0.0.0.9000      
+## [11] BiocParallel_1.32.6         SingleCellExperiment_1.20.1
+## [13] SummarizedExperiment_1.28.0 Biobase_2.58.0             
+## [15] GenomicRanges_1.50.2        GenomeInfoDb_1.34.9        
+## [17] IRanges_2.32.0              S4Vectors_0.36.2           
+## [19] BiocGenerics_0.44.0         MatrixGenerics_1.11.1      
+## [21] matrixStats_0.63.0          BiocStyle_2.26.0           
+## [23] rmarkdown_2.20             
 ## 
 ## loaded via a namespace (and not attached):
-##   [1] colorspace_2.1-0          ggsignif_0.6.4           
-##   [3] bluster_1.8.0             XVector_0.38.0           
-##   [5] BiocNeighbors_1.16.0      ggpubr_0.6.0             
-##   [7] optimParallel_1.0-2       fansi_1.0.4              
-##   [9] splines_4.2.2             codetools_0.2-19         
-##  [11] sparseMatrixStats_1.11.1  mnormt_2.1.1             
-##  [13] doParallel_1.0.17         cachem_1.0.7             
-##  [15] knitr_1.42                wesanderson_0.3.6        
-##  [17] jsonlite_1.8.4            ResidualMatrix_1.8.0     
-##  [19] broom_1.0.4               cluster_2.1.4            
-##  [21] png_0.1-8                 uwot_0.1.14              
-##  [23] BiocManager_1.30.20       compiler_4.2.2           
-##  [25] dqrng_0.3.0               backports_1.4.1          
-##  [27] ggcorrplot_0.1.4          RcppZiggurat_0.1.6       
-##  [29] Matrix_1.5-3              fastmap_1.1.1            
-##  [31] limma_3.54.2              cli_3.6.0                
-##  [33] BiocSingular_1.14.0       htmltools_0.5.4          
-##  [35] tools_4.2.2               rsvd_1.0.5               
-##  [37] igraph_1.4.1              coda_0.19-4              
-##  [39] gtable_0.3.1              glue_1.6.2               
-##  [41] GenomeInfoDbData_1.2.9    clusterGeneration_1.3.7  
-##  [43] dplyr_1.1.0               maps_3.4.1               
-##  [45] fastmatch_1.1-3           Rcpp_1.0.10              
-##  [47] carData_3.0-5             jquerylib_0.1.4          
-##  [49] vctrs_0.5.2               gdata_2.18.0.1           
-##  [51] ape_5.7-1                 nlme_3.1-162             
-##  [53] iterators_1.0.14          DelayedMatrixStats_1.20.0
-##  [55] xfun_0.37                 beachmat_2.14.0          
-##  [57] lifecycle_1.0.3           irlba_2.3.5.1            
-##  [59] phangorn_2.11.1           gtools_3.9.4             
-##  [61] statmod_1.5.0             rstatix_0.7.2            
-##  [63] edgeR_3.40.2              zlibbioc_1.44.0          
-##  [65] MASS_7.3-58.3             scales_1.2.1             
-##  [67] parallel_4.2.2            expm_0.999-7             
-##  [69] yaml_2.3.7                paleotree_3.4.5          
-##  [71] gridExtra_2.3             ggplot2_3.4.1            
-##  [73] sass_0.4.5                foreach_1.5.2            
-##  [75] ScaledMatrix_1.6.0        plotrix_3.8-2            
-##  [77] checkmate_2.1.0           phytools_1.5-1           
-##  [79] rlang_1.0.6               pkgconfig_2.0.3          
-##  [81] bitops_1.0-7              evaluate_0.20            
-##  [83] lattice_0.20-45           purrr_1.0.1              
-##  [85] Rfast_2.0.7               tidyselect_1.2.0         
-##  [87] magrittr_2.0.3            bookdown_0.33            
-##  [89] R6_2.5.1                  generics_0.1.3           
-##  [91] metapod_1.6.0             combinat_0.0-8           
-##  [93] DelayedArray_0.24.0       pillar_1.8.1             
-##  [95] fitdistrplus_1.1-8        survival_3.5-5           
-##  [97] scatterplot3d_0.3-42      abind_1.4-5              
-##  [99] RCurl_1.98-1.10           tibble_3.2.0             
-## [101] batchelor_1.14.1          car_3.1-1                
-## [103] utf8_1.2.3                viridis_0.6.2            
-## [105] locfit_1.5-9.7            grid_4.2.2               
-## [107] digest_0.6.31             tidyr_1.3.0              
-## [109] numDeriv_2016.8-1.1       munsell_0.5.0            
-## [111] viridisLite_0.4.1         bslib_0.4.2              
-## [113] quadprog_1.5-8</code></pre>
+##   [1] utf8_1.2.3                tidyselect_1.2.0         
+##   [3] grid_4.2.2                combinat_0.0-8           
+##   [5] munsell_0.5.0             ScaledMatrix_1.6.0       
+##   [7] codetools_0.2-19          statmod_1.5.0            
+##   [9] future_1.32.0             tester_0.1.7             
+##  [11] withr_2.5.0               batchelor_1.14.1         
+##  [13] colorspace_2.1-0          knitr_1.42               
+##  [15] ggsignif_0.6.4            pbmcapply_1.5.1          
+##  [17] listenv_0.9.0             GenomeInfoDbData_1.2.9   
+##  [19] mnormt_2.1.1              polyclip_1.10-4          
+##  [21] optimParallel_1.0-2       farver_2.1.1             
+##  [23] coda_0.19-4               parallelly_1.34.0        
+##  [25] vctrs_0.5.2               generics_0.1.3           
+##  [27] clusterGeneration_1.3.7   ipred_0.9-14             
+##  [29] xfun_0.37                 timechange_0.2.0         
+##  [31] R6_2.5.1                  doParallel_1.0.17        
+##  [33] ggbeeswarm_0.7.1          graphlayouts_0.8.4       
+##  [35] rsvd_1.0.5                locfit_1.5-9.7           
+##  [37] pals_1.7                  RcppZiggurat_0.1.6       
+##  [39] bitops_1.0-7              cachem_1.0.7             
+##  [41] DelayedArray_0.24.0       scales_1.2.1             
+##  [43] nnet_7.3-18               ggraph_2.1.0             
+##  [45] beeswarm_0.4.0            gtable_0.3.1             
+##  [47] beachmat_2.14.0           globals_0.16.2           
+##  [49] phangorn_2.11.1           tidygraph_1.2.3          
+##  [51] timeDate_4022.108         rlang_1.0.6              
+##  [53] scatterplot3d_0.3-42      splines_4.2.2            
+##  [55] rstatix_0.7.2             yardstick_1.1.0          
+##  [57] dichromat_2.0-0.1         broom_1.0.4              
+##  [59] checkmate_2.1.0           reshape2_1.4.4           
+##  [61] BiocManager_1.30.20       yaml_2.3.7               
+##  [63] abind_1.4-5               backports_1.4.1          
+##  [65] Rfast_2.0.7               lava_1.7.2.1             
+##  [67] tools_4.2.2               bookdown_0.33            
+##  [69] ggplot2_3.4.1             Augur_1.0.3              
+##  [71] jquerylib_0.1.4           RColorBrewer_1.1-3       
+##  [73] plyr_1.8.8                Rcpp_1.0.10              
+##  [75] parsnip_1.0.4             sparseMatrixStats_1.11.1 
+##  [77] zlibbioc_1.44.0           purrr_1.0.1              
+##  [79] RCurl_1.98-1.10           rpart_4.1.19             
+##  [81] ggpubr_0.6.0              viridis_0.6.2            
+##  [83] cowplot_1.1.1             zoo_1.8-11               
+##  [85] ggrepel_0.9.3             cluster_2.1.4            
+##  [87] furrr_0.3.1               magrittr_2.0.3           
+##  [89] data.table_1.14.8         ResidualMatrix_1.8.0     
+##  [91] lmtest_0.9-40             patchwork_1.1.2          
+##  [93] evaluate_0.20             paleotree_3.4.5          
+##  [95] gridExtra_2.3             compiler_4.2.2           
+##  [97] maps_3.4.1                htmltools_0.5.4          
+##  [99] tidyr_1.3.0               expm_0.999-7             
+## [101] lubridate_1.9.2           DBI_1.1.3                
+## [103] tweenr_2.0.2              MASS_7.3-58.3            
+## [105] Matrix_1.5-3              car_3.1-1                
+## [107] wesanderson_0.3.6         cli_3.6.0                
+## [109] quadprog_1.5-8            gdata_2.18.0.1           
+## [111] parallel_4.2.2            metapod_1.6.0            
+## [113] gower_1.0.1               igraph_1.4.1             
+## [115] pkgconfig_2.0.3           RcppGreedySetCover_0.1.0 
+## [117] numDeriv_2016.8-1.1       recipes_1.0.5            
+## [119] foreach_1.5.2             vipor_0.4.5              
+## [121] bslib_0.4.2               ggcorrplot_0.1.4         
+## [123] hardhat_1.2.0             dqrng_0.3.0              
+## [125] XVector_0.38.0            prodlim_2019.11.13       
+## [127] stringr_1.5.0             digest_0.6.31            
+## [129] phytools_1.5-1            fastmatch_1.1-3          
+## [131] uwot_0.1.14               DelayedMatrixStats_1.20.0
+## [133] gtools_3.9.4              lifecycle_1.0.3          
+## [135] nlme_3.1-162              jsonlite_1.8.4           
+## [137] carData_3.0-5             BiocNeighbors_1.16.0     
+## [139] mapproj_1.2.11            viridisLite_0.4.1        
+## [141] fansi_1.0.4               pillar_1.8.1             
+## [143] lattice_0.20-45           survival_3.5-5           
+## [145] fastmap_1.1.1             plotrix_3.8-2            
+## [147] glue_1.6.2                png_0.1-8                
+## [149] iterators_1.0.14          bluster_1.8.0            
+## [151] ggforce_0.4.1             class_7.3-21             
+## [153] stringi_1.7.12            sass_0.4.5               
+## [155] rsample_1.1.1             BiocSingular_1.14.0      
+## [157] future.apply_1.10.0       irlba_2.3.5.1            
+## [159] ape_5.7-1</code></pre>
 </div>
 
 

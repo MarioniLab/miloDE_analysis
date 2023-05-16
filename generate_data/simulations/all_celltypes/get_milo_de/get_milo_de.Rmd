@@ -66,11 +66,11 @@ anno = expand.grid(order = 2, k = seq(15,30,5), prop = c(0.1), round = c(1:5))
 anno$id = paste0(anno$order , "_" , anno$k , "_" , anno$round)
 
 sces_milo = lapply(sces , function(sce){
-  sce_milo = bplapply(1:nrow(anno) , function(i){
+  sce_milo = lapply(1:nrow(anno) , function(i){
     set.seed(anno$round[i])
     out = miloDE::assign_neighbourhoods(sce , k = anno$k[i], prop = anno$prop[i] , order = anno$order[i] , reducedDim_name = "scvi_supervised_wt" , filtering = T)
     return(out)
-  }, BPPARAM = mcparam)
+  })
   return(sce_milo)
 })
 
@@ -226,7 +226,6 @@ stat = lapply(1:length(sces_milo) , function(j){
     print(i)
     current.sce = sce_milo[[i]]
     rowdata = as.data.frame(rowData(current.sce))
-  
     stat_de = get_de_selected_genes(current.sce , genes = simulated_genes$ENSEMBL)
     colnames(stat_de)[colnames(stat_de) == "gene"] = "ENSEMBL"
     stat_de = merge(stat_de , rowdata , all.x = T)

@@ -34,7 +34,7 @@ source(paste0(root.dir , "miloDE_analysis/core_functions.R"))
 sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/WT/mouse_embryo_E8.5.Rds"))
 sce = sce[, sce$sample == 17]
 sce = logNormCounts(sce)
-sce = retain_informative_genes(sce , n = 3000)
+sce = retain_informative_genes(sce , n = 2000)
 counts(sce) = as.matrix(counts(sce))
 
 params = splatEstimate( sce )
@@ -47,12 +47,12 @@ params = splatEstimate( sce )
 ```{r assign-anno-grid, message = FALSE}
 
 
-n_cells_total = c(9000)
-n_batches = c(3)
+n_cells_total = c(8000)
+n_batches = c(2)
 group_prob = c(0.5)
-de_prob = c(0, 0.001 , 0.01 , 0.05 , 0.1 , 0.5)
-de_facLoc = c(0.5 , 1 , 2 , 5 , 10)
-batch = c(TRUE , FALSE)
+de_prob = c(0, 0.0025 , 0.01 , 0.05 , 0.1 , 0.5)
+de_facLoc = c(0.75 , 1.5 , 3 , 6)
+batch = c(FALSE)
 round = c(1:3)
 
 anno = expand.grid(n_cells_total = n_cells_total , n_batches = n_batches,  group_prob = group_prob , de_prob = de_prob, de_facLoc = de_facLoc , batch = batch , round = round)

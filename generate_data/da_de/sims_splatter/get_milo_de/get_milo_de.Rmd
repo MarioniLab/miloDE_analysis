@@ -20,7 +20,7 @@ library(miloDE)
 library(stringr)
 library(dplyr)
 
-ncores = 30
+ncores = 24
 mcparam = MulticoreParam(workers = ncores)
 register(mcparam)
 set.seed(32)
@@ -32,8 +32,8 @@ source(paste0(root.dir , "miloDE_analysis/core_functions.R"))
 sims = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_splatter/sims.Rds"))
 
 
-anno_1 = expand.grid(order = 1 , k = c(75,150,250) , seed = c(13,17,32,48,56))
-anno_2 = expand.grid(order = 2 , k = c(15,25,35) , seed = c(13,17,32,48,56))
+anno_1 = expand.grid(order = 1 , k = c(100,200) , seed = c(13,17,32))
+anno_2 = expand.grid(order = 2 , k = c(15,25) , seed = c(13,17,32))
 anno = rbind(anno_1 , anno_2)
 
 
@@ -46,10 +46,12 @@ anno = rbind(anno_1 , anno_2)
 
 get_milo_stat = function(sce_milo , reducedDim_name , pval.thresh = 0.1){
   
-  de_stat = miloDE::de_test_neighbourhoods(sce_milo , design = ~factor(Group) , covariates = c("sample" , "Group") , min_n_cells_per_sample = 1, min_count = 0 , verbose = F)
+  de_stat = miloDE::de_test_neighbourhoods(sce_milo , design = ~factor(Group) , covariates = c("sample" , "Group") , min_n_cells_per_sample = 1, min_count = 0 , verbose = F )
   colnames(de_stat)[colnames(de_stat) == "gene"] = "Gene"
   rowdata = as.data.frame(rowData(sce_milo))
   de_stat = merge(de_stat , rowdata[, c("Gene" , "DEFacGroup2")] , all.x = T , all.y = F)
+  # change NaNs to 1
+  de_stat$pval_corrected_across_genes[is.na(de_stat$pval_corrected_across_genes)] = 1
   # get combined stat per Nhood
   stat = as.data.frame(de_stat %>% group_by(Nhood) %>% dplyr::summarise(
     tp = sum(pval_corrected_across_genes <= pval.thresh & DEFacGroup2 != 1) ,
@@ -74,10 +76,8 @@ stat = bplapply(1:length(sims) , function(j){
     set.seed(anno$seed[i])
     out_not_de = miloDE::assign_neighbourhoods(sim , reducedDim_name = "pca.not_de" , order = anno$order[i] , k = anno$k[i] , d = 5 , verbose = F , filtering = T)
     out_not_de = get_milo_stat(out_not_de , "pca.not_de")
-    
     out = rbind(out_all , out_not_de)
     out = cbind(out , anno[i , ])
-    
     return(out)
   })
   stat_per_sim = do.call(rbind , stat_per_sim)
