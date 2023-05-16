@@ -36,7 +36,7 @@ library(miloR)
 library(miloDE)
 library(S4Vectors)
 
-ncores = 30
+ncores = 40
 mcparam = MulticoreParam(workers = ncores)
 register(mcparam)
 
@@ -55,29 +55,6 @@ celltypes = list("PGC" , "Blood progenitors 1" , "Blood progenitors 2" , "Erythr
 
 ```
 
-# Get sce-milo
-
-We wont be saving this coz its easy to recalc and it weights a lot
-
-```{r get-sce-milo, message = FALSE}
-
-
-anno = expand.grid(order = 2, k = seq(15,30,5), prop = c(0.1), round = c(1:5))
-anno$id = paste0(anno$order , "_" , anno$k , "_" , anno$round)
-
-sces_milo = lapply(sces , function(sce){
-  sce_milo = lapply(1:nrow(anno) , function(i){
-    set.seed(anno$round[i])
-    out = miloDE::assign_neighbourhoods(sce , k = anno$k[i], prop = anno$prop[i] , order = anno$order[i] , reducedDim_name = "scvi_supervised_wt" , filtering = T)
-    return(out)
-  })
-  return(sce_milo)
-})
-
-
-
-
-```
 
 # Functions
 
@@ -217,7 +194,22 @@ add_stat = function(sce_milo , celltypes){
 
 # Run miloDE
 
-```{r milo-de, message = FALSE}
+## Original embedding
+
+```{r milo-de-original, message = FALSE}
+
+
+anno = expand.grid(order = 2, k = seq(15,30,5), prop = c(0.1), round = c(1:3))
+anno$id = paste0(anno$order , "_" , anno$k , "_" , anno$round)
+
+sces_milo = lapply(sces , function(sce){
+  sce_milo = lapply(1:nrow(anno) , function(i){
+    set.seed(anno$round[i])
+    out = miloDE::assign_neighbourhoods(sce , k = anno$k[i], prop = anno$prop[i] , order = anno$order[i] , reducedDim_name = "mnn_unsupervised_wt" , filtering = T)
+    return(out)
+  })
+  return(sce_milo)
+})
 
 
 stat = lapply(1:length(sces_milo) , function(j){
@@ -239,11 +231,57 @@ stat = lapply(1:length(sces_milo) , function(j){
   stat_per_sce = do.call(rbind , stat_per_sce)
   return(stat_per_sce)
 })
-saveRDS(stat , file = paste0(root.dir , "data/processed/simulations/all_celltypes/milo_de_stat.Rds"))
+saveRDS(stat , file = paste0(root.dir , "data/processed/simulations/all_celltypes/milo_de_stat__original_embedding.Rds"))
 
 
 
 ```
+
+
+## Recalculated embedding
+
+```{r milo-de-recalc, message = FALSE}
+
+
+anno = expand.grid(order = 2, k = seq(15,30,5), prop = c(0.1), round = c(1:3))
+anno$id = paste0(anno$order , "_" , anno$k , "_" , anno$round)
+
+sces_milo = lapply(sces , function(sce){
+  sce_milo = lapply(1:nrow(anno) , function(i){
+    set.seed(anno$round[i])
+    out = miloDE::assign_neighbourhoods(sce , k = anno$k[i], prop = anno$prop[i] , order = anno$order[i] , reducedDim_name = "pca.simulations" , filtering = T)
+    return(out)
+  })
+  return(sce_milo)
+})
+
+
+stat = lapply(1:length(sces_milo) , function(j){
+  sce_milo = sces_milo[[j]]
+  stat_per_sce = lapply(1:nrow(anno) , function(i){
+    print(i)
+    current.sce = sce_milo[[i]]
+    rowdata = as.data.frame(rowData(current.sce))
+    stat_de = get_de_selected_genes(current.sce , genes = simulated_genes$ENSEMBL)
+    colnames(stat_de)[colnames(stat_de) == "gene"] = "ENSEMBL"
+    stat_de = merge(stat_de , rowdata , all.x = T)
+    
+    milo_stat = add_stat(current.sce , celltypes[[j]])
+    stat_de = merge(stat_de , milo_stat , all.x = T)
+    
+    stat_de = cbind(stat_de , anno[i , c("order" , "k" , "round" , "id")])
+    return(stat_de)
+  })
+  stat_per_sce = do.call(rbind , stat_per_sce)
+  return(stat_per_sce)
+})
+saveRDS(stat , file = paste0(root.dir , "data/processed/simulations/all_celltypes/milo_de_stat__recalculated_embedding.Rds"))
+
+
+
+```
+
+
 
 # Session Info
 

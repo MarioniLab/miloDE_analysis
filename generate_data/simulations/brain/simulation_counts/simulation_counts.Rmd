@@ -33,9 +33,11 @@ source(paste0(root.dir , "am_hubmapMetaRef/functions/milo_functions.R"))
 
 
 # load sce with embedding
-sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/mouse_embryo_wt_chimera.Rds"))
+#sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/mouse_embryo_wt_chimera.Rds"))
 # subset for brain cells
-sce = sce[, sce$celltype == "Forebrain/Midbrain/Hindbrain"]
+#sce = sce[, sce$celltype == "Forebrain/Midbrain/Hindbrain"]
+
+sce = readRDS(paste0(root.dir , "data/processed/simulations/brain/sce_w_clusters.Rds"))
 
 rowdata = as.data.frame(rowData(sce))
 rowdata$n_cells_expressed = as.numeric( apply(counts(sce) , 1 , function(x) sum(x > 0)) )
@@ -49,21 +51,21 @@ rowdata$avg_expr = round( rowMeans(logcounts(sce)) , 1 )
 ```{r cluster-braon-cells, message = FALSE}
 
 
-umaps = as.data.frame( scater::calculateUMAP(t(reducedDim(sce , "scvi_supervised_wt"))) )
+#umaps = as.data.frame( scater::calculateUMAP(t(reducedDim(sce , "scvi_supervised_wt"))) )
 
-set.seed(32)
+#set.seed(32)
 
-snn_graph = buildSNNGraph(reducedDim(sce , "scvi_supervised_wt"), k = 20 , d = 10 , transposed = T)
-clusters = cluster_louvain(snn_graph)  
-sce$cluster = as.character(clusters$membership)
-saveRDS(sce , file = paste0(root.dir , "data/processed/simulations/brain/sce_w_clusters.Rds"))
+#snn_graph = buildSNNGraph(reducedDim(sce , "scvi_supervised_wt"), k = 20 , d = 10 , transposed = T)
+#clusters = cluster_louvain(snn_graph)  
+#sce$cluster = as.character(clusters$membership)
+#saveRDS(sce , file = paste0(root.dir , "data/processed/simulations/brain/sce_w_clusters.Rds"))
 
-umaps_ext = cbind(umaps , as.data.frame(colData(sce)))
+#umaps_ext = cbind(umaps , as.data.frame(colData(sce)))
 
-p = ggplot(umaps_ext , aes(x = V1 , y = V2 , col = factor(cluster))) +
-  geom_point() +
-  theme_bw()
-p
+#p = ggplot(umaps_ext , aes(x = V1 , y = V2 , col = factor(cluster))) +
+#  geom_point() +
+#  theme_bw()
+#p
 
 
 
@@ -152,6 +154,35 @@ saveRDS(genes_2_simulate , file = paste0(root.dir , "data/processed/simulations/
 ```{r add-sim-counts, message = FALSE}
 
 
+hvgs = scran::getTopHVGs(sce[, sce$type == "wt"] , n = 1000)
+
+add_batch_corrected_pca = function(sce, genes , reduced.dim_name = "pca.corrected" , batch = "sample" , d = 10, bpparam = NULL , correct = T){
+  require(batchelor)
+  set.seed(32)
+  meta = as.data.frame(colData(sce))
+  batchFactor = factor(meta[, colnames(meta) == batch])
+  if (is.null(bpparam)){
+    set.seed(32)
+    mbpca = multiBatchPCA(sce[genes , ], batch = batchFactor, d = d)
+  }
+  else {
+    set.seed(32)
+    mbpca = multiBatchPCA(sce[genes , ], batch = batchFactor, d = d , BPPARAM = bpparam)
+  }
+  if (correct){
+    out = do.call(reducedMNN, mbpca)
+    joint.pca = out$corrected
+  }
+  else {
+    joint.pca = do.call(rbind , mbpca)
+  }
+  joint.pca = joint.pca[order(rownames(joint.pca)) , ]
+  sce = sce[, order(colnames(sce))]
+  reducedDim(sce , reduced.dim_name) = joint.pca
+  return(sce)
+}
+
+
 
 add_simulated_counts <- function(sce, clusters = clusters, gene, frac_cells_change, range){
   counts = counts(sce)
@@ -176,6 +207,8 @@ sces = bplapply(cluster_splits , function(clusters){
   
   }
   sce_simulated = scuttle::logNormCounts(sce_simulated)
+  # add new embedding
+  sce_simulated = add_batch_corrected_pca(sce_simulated , hvgs , reduced.dim_name = "pca.simulations")
   return(sce_simulated)
 } , BPPARAM = mcparam)
 saveRDS(sces , file = paste0(root.dir , "data/processed/simulations/brain/sces_simulated.Rds"))

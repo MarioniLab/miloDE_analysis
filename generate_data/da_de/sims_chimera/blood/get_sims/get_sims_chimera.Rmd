@@ -21,7 +21,7 @@ library(miloDE)
 library(dplyr)
 library(tibble)
 
-ncores = 20
+ncores = 37
 mcparam = MulticoreParam(workers = ncores)
 register(mcparam)
 set.seed(32)
@@ -115,14 +115,17 @@ candidate_no_de_genes = unlist(candidate_no_de_genes)
 ```{r candidate-genes, message = FALSE}
 
 
-anno = expand.grid(round = c(1:5) , n_markers = seq(2,length(markers) , 2))
+anno = expand.grid(round = c(1:5) , n_markers = seq(0,length(markers) , 2))
+anno$id = paste0(anno$round , "_" , anno$n_markers)
 genes_2_simulate = lapply(1:nrow(anno) , function(i){
   out = data.frame(ENSEMBL = c(sample(markers , anno$n_markers[i]) , sample(candidate_no_de_genes , (length(markers)-anno$n_markers[i]))))
+  out$gene_type = c(rep("marker" , anno$n_markers[i]) , rep("chimera_spec" , (length(markers)-anno$n_markers[i])))
   out$range = sample(c(1,2,3), nrow(out) , replace = T)
   out$frac_2_change = sample(c(1), nrow(out) , replace = T)
   out = merge(out , rowdata[, c("ENSEMBL" , "SYMBOL")] , all.x = T , all.y = F)
   return(out)
 })
+names(genes_2_simulate) = anno$id
 saveRDS(genes_2_simulate , file = paste0(root.dir , "data/processed/da_de/simulations_chimera/blood/simulated_genes.Rds"))
 
 ```
@@ -130,6 +133,35 @@ saveRDS(genes_2_simulate , file = paste0(root.dir , "data/processed/da_de/simula
 # Add simulated counts
 
 ```{r add-sim-counts, message = FALSE}
+
+
+hvgs = scran::getTopHVGs(sce[, sce$type == "wt"] , n = 1000)
+
+add_batch_corrected_pca = function(sce, genes , reduced.dim_name = "pca.corrected" , batch = "sample" , d = 10, bpparam = NULL , correct = T){
+  require(batchelor)
+  set.seed(32)
+  meta = as.data.frame(colData(sce))
+  batchFactor = factor(meta[, colnames(meta) == batch])
+  if (is.null(bpparam)){
+    set.seed(32)
+    mbpca = multiBatchPCA(sce[genes , ], batch = batchFactor, d = d)
+  }
+  else {
+    set.seed(32)
+    mbpca = multiBatchPCA(sce[genes , ], batch = batchFactor, d = d , BPPARAM = bpparam)
+  }
+  if (correct){
+    out = do.call(reducedMNN, mbpca)
+    joint.pca = out$corrected
+  }
+  else {
+    joint.pca = do.call(rbind , mbpca)
+  }
+  joint.pca = joint.pca[order(rownames(joint.pca)) , ]
+  sce = sce[, order(colnames(sce))]
+  reducedDim(sce , reduced.dim_name) = joint.pca
+  return(sce)
+}
 
 
 add_simulated_counts <- function(sce, gene, frac_cells_change, range){
@@ -154,8 +186,12 @@ sces = bplapply(genes_2_simulate , function(current.genes_2_simulate){
   
   }
   sce_simulated = scuttle::logNormCounts(sce_simulated)
+  # add re-computed embedding
+  sce_simulated = add_batch_corrected_pca(sce_simulated, genes = hvgs, reduced.dim_name = "pca.simulations" , batch = "sample" , d = 10, bpparam = NULL , correct = T)
+    
   return(sce_simulated)
 } , BPPARAM = mcparam)
+names(sces) = anno$id
 saveRDS(sces , file = paste0(root.dir , "data/processed/da_de/simulations_chimera/blood/sces_simulated.Rds"))
 
 
