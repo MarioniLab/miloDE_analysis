@@ -90,7 +90,7 @@ saveRDS(stat , file = paste0(root.dir , "data/processed/da_de/simulations_splatt
 
 ## Split by logFC
 
-```{r stat-all-genes-comb, message = FALSE}
+```{r stat-split-genes-comb, message = FALSE}
 
 
 get_stat_per_sim_and_nhood_assignment = function(id_sim , id_nhood_assignment , reducedDim_name , spatialFDR_DA.thresh = 0.1 , spatialFDR_DE.thresh = 0.1){
