@@ -1,0 +1,278 @@
+---
+title: "Analysis for simulations on brain."
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+```{r load, message = FALSE}
+
+
+library(SingleCellExperiment)
+library(miloDE)
+library(miloR)
+library(ggplot2)
+library(ggpubr)
+library(viridis)
+library(MetBrewer)
+library(BiocParallel)
+
+ncores = 5
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+
+set.seed(32)
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+figures.dir = paste0(root.dir , "figures/detection_analysis/chimera_embryo/brain/")
+
+
+# load data
+sce = readRDS(paste0(root.dir , "data/processed/simulations/brain/sce_w_clusters.Rds"))
+cluster_splits = list(c(8) , c(3) , c(5) ,c(1,7) ,  c(5,8) , c(3,6)  , c(3,2,6) , c(1,4,5,7) , c(1,4,5,7,2) , c(1,2,3,4,5,6,7))
+simulated_genes = readRDS(file = paste0(root.dir , "data/processed/simulations/brain/simulated_genes.Rds"))
+sces = readRDS(paste0(root.dir , "data/processed/simulations/brain/sces_simulated.Rds"))
+
+milo_de_stat = readRDS(paste0(root.dir , "data/processed/simulations/brain/milo_de_stat__recalculated_embedding.Rds"))
+bulk_de_stat = readRDS(paste0(root.dir , "data/processed/simulations/brain/bulk_de_stat.Rds"))
+
+
+```
+
+# Unlist miloDE and bulkDE with assigning % of cells perturbed
+
+```{r unlist-clusts, message = FALSE}
+
+
+cluster_splits_df = lapply(1:length(cluster_splits) , function(i){
+  out = round( mean(sce$cluster %in% cluster_splits[[i]]) , 2 )
+  out = data.frame(idx = i , prop = out)
+  return(out)
+})
+cluster_splits_df = do.call(rbind , cluster_splits_df)
+
+
+
+bulk_de_stat = lapply(1:length(bulk_de_stat) , function(i){
+  current.stat = bulk_de_stat[[i]]
+  current.stat$logFC_bulk_all = -1*(current.stat$logFC_bulk_all)
+  current.stat$logFC_bulk_clusters = -1*(current.stat$logFC_bulk_clusters)
+  current.stat$logFC_bulk_all_round = round(current.stat$logFC_bulk_all , 1)
+  current.stat$logFC_bulk_clusters_round = round(current.stat$logFC_bulk_clusters , 1)
+  current.stat = cbind(current.stat , cluster_splits_df[i,])
+  return(current.stat)
+})
+bulk_de_stat = do.call(rbind , bulk_de_stat)
+
+
+milo_de_stat = lapply(1:length(milo_de_stat) , function(i){
+  current.stat = milo_de_stat[[i]]
+  current.stat = cbind(current.stat , cluster_splits_df[i,])
+  return(current.stat)
+})
+milo_de_stat = do.call(rbind , milo_de_stat)
+
+
+```
+
+# Overview of perturbed cells
+
+```{r load-data, message = FALSE}
+
+
+umaps = as.data.frame( scater::calculateUMAP(t(reducedDim(sce , "scvi_supervised_wt"))) )
+reducedDim(sce , paste0("umap_" , "scvi_supervised_wt")) = umaps
+
+cols = c("#899DA4" , "#C93312")
+names(cols) = c(F,T)
+
+
+get_plot_per_cluster_split = function(idx){
+  current.clusters = cluster_splits[[idx]]
+  sce$perturbed = sce$cluster %in% current.clusters
+  
+  meta = cbind(as.data.frame(colData(sce)) , as.data.frame(reducedDim(sce , "umap_scvi_supervised_wt")))
+  meta = meta[order(meta$perturbed) , ]
+  p = ggplot(meta , aes(x = V1 , y = V2 , col = perturbed)) + 
+    geom_point(size = .5 , alpha = .9) +
+    theme_bw() + 
+    scale_color_manual(values = cols) + 
+    ggtitle(paste0("Prop. = ", cluster_splits_df$prop[cluster_splits_df$idx == idx]))
+  return(p)
+}
+
+plots = lapply(c(1:10) , function(i){
+  p = get_plot_per_cluster_split(i)
+  return(p)
+})
+p = ggarrange(plotlist = plots , nrow = 2 , ncol = 5, common.legend = T)
+p
+ggsave(filename = paste0(figures.dir, "overview_perturbations", ".png"), plot = p, width = 8, height = 4)
+
+
+```
+
+
+# bulkDE stat
+
+## Heatmap: lfc x prop
+
+```{r load-data, message = FALSE}
+
+
+bulk_de_stat_combined = as.data.frame(bulk_de_stat %>% group_by(idx , prop , logFC_bulk_clusters_round) %>% 
+                                        dplyr::summarise(frac_genes_sig = mean(PValue_bulk_all < 0.05) , 
+                                                         avg_logFC_all = mean(logFC_bulk_all_round)))
+
+
+p = ggplot(bulk_de_stat_combined[bulk_de_stat_combined$logFC_bulk_clusters < 4 & bulk_de_stat_combined$logFC_bulk_clusters > 0, ] , aes(x = factor(prop) , y = factor(logFC_bulk_clusters_round) , fill = frac_genes_sig)) + 
+  geom_tile() + 
+  scale_fill_viridis(discrete = F , name = "% genes\ndet. as DE") +
+  theme_bw() + 
+  labs(x = "Proportion of perturbed cells" , y = "logFC for perturbed cells")
+p
+ggsave(filename = paste0(figures.dir, "bulk_de/heatmap__det_rate", ".png"), plot = p, width = 5, height = 5)
+
+
+p = ggplot(bulk_de_stat_combined[bulk_de_stat_combined$logFC_bulk_clusters < 4 & bulk_de_stat_combined$logFC_bulk_clusters > 0, ] , aes(x = factor(prop) , y = factor(logFC_bulk_clusters_round) , fill = avg_logFC_all)) + 
+  geom_tile() + 
+  scale_fill_viridis(discrete = F, name = "abs\nlogFC") +
+  theme_bw() + 
+  labs(x = "Proportion of perturbed cells" , y = "logFC for perturbed cells")
+p
+ggsave(filename = paste0(figures.dir, "bulk_de/heatmap__abs_logFC", ".png"), plot = p, width = 5, height = 5)
+
+
+```
+
+## compare logFC (abs vs perturbed)
+
+```{r load-data, message = FALSE}
+
+
+cols = wes_palette("Zissou1", length(unique(bulk_de_stat$prop)), type = "continuous")
+
+df = bulk_de_stat[bulk_de_stat$logFC_bulk_clusters < 4 & bulk_de_stat$logFC_bulk_clusters > 0 ,]
+df = df[sample(nrow(df)) , ]
+p = ggplot(df, aes(y = logFC_bulk_all , x = logFC_bulk_clusters , col = factor(prop))) +
+  geom_point(alpha = .75 , size = .75) +
+  theme_bw() +
+  scale_color_manual(values = cols[1:length(unique(bulk_de_stat$prop))] , name = "Prop. of\nperturbed\ncells") + 
+  geom_abline(slope = 1 , "linetype" = "dashed" , color = "black") + 
+  labs(x = "Estimated logFC in perturbed sub-population" , y = "logFC from DE test") 
+p
+ggsave(filename = paste0(figures.dir, "bulk_de/scater_logFC", ".png"), plot = p, width = 5, height = 4)
+
+
+
+
+
+```
+
+# miloDE - sensitivity of DE detection
+
+## Get stat
+
+For each simulation, nhood assignment, gene and CT purity thresh - get sensitivity and FDR
+
+```{r load-data, message = FALSE}
+
+
+ct_purity.thresh = c(0, 0.1 , 0.25 , 0.5)
+
+milo_de_stat_combined = lapply(ct_purity.thresh , function(ct_purity){
+  out = as.data.frame(milo_de_stat %>% group_by(idx , prop , order , k , round , id , ENSEMBL , SYMBOL ) %>% 
+                        dplyr::summarise(sensitivity = sum(pval < 0.05 & cluster_purity > ct_purity)/sum(cluster_purity > ct_purity) , 
+                                         fdr = sum(pval < 0.05 & cluster_purity <= ct_purity)/sum(pval < 0.05) ))
+  out$ct_purity.thresh = ct_purity
+  return(out)
+})
+milo_de_stat_combined = do.call(rbind, milo_de_stat_combined)
+milo_de_stat_combined = merge(milo_de_stat_combined , bulk_de_stat[, c("ENSEMBL" , "idx" , "logFC_bulk_clusters_round")] , by = c("ENSEMBL" , "idx") , all.x = T , all.y = F)
+
+
+milo_de_stat_combined = as.data.frame(milo_de_stat_combined %>% group_by(idx , prop ,logFC_bulk_clusters_round , ct_purity.thresh) %>% 
+                                        dplyr::summarise(sensitivity = mean(sensitivity , na.rm = T) , fdr = mean(fdr , na.rm = T)))
+
+
+plots = lapply(unique(milo_de_stat_combined$ct_purity.thresh) , function(ct_purity){
+  current.stat = milo_de_stat_combined[milo_de_stat_combined$logFC_bulk_clusters_round < 4 & milo_de_stat_combined$logFC_bulk_clusters_round > 0 & milo_de_stat_combined$ct_purity.thresh == ct_purity, ]
+  
+  p = ggplot(current.stat , aes(x = factor(prop) , y = factor(logFC_bulk_clusters_round) , fill = sensitivity)) + 
+    geom_tile() + 
+    scale_fill_viridis(discrete = F , name = "Sensitivity") +
+    theme_bw() +
+    labs(x = "Proportion of perturbed cells" , y = "logFC for perturbed cells")
+  ggsave(filename = paste0(figures.dir, "milo_de/heatmaps_sensitivity/ct_purity_", ct_purity , ".png"), plot = p, width = 5, height = 5)
+  
+  p = ggplot(current.stat , aes(x = factor(prop) , y = factor(logFC_bulk_clusters_round) , fill = fdr)) + 
+    geom_tile() + 
+    scale_fill_viridis(discrete = F , name = "FDR") +
+    theme_bw() +
+    labs(x = "Proportion of perturbed cells" , y = "logFC for perturbed cells")
+  p
+  ggsave(filename = paste0(figures.dir, "milo_de/heatmaps_fdr/ct_purity_", ct_purity , ".png"), plot = p, width = 5, height = 5)
+})
+
+
+
+```
+
+## Compare logFC (abs vs perturbed)
+
+```{r load-data, message = FALSE}
+
+
+cols = wes_palette("Zissou1", length(unique(bulk_de_stat$prop)), type = "continuous")
+
+
+df = merge(milo_de_stat , bulk_de_stat[, c("ENSEMBL" , "idx" , "logFC_bulk_clusters")] , by = c("ENSEMBL" , "idx") , all.x = T , all.y = F)
+df = df[df$logFC_bulk_clusters < 4 & df$logFC_bulk_clusters > 0 ,]
+df$logFC = -1*df$logFC 
+df = df[sample(nrow(df)) , ]
+
+
+p1 = ggplot(df[df$cluster_purity > 0.1 & df$pval_corrected_across_nhoods < 0.1, ], aes(y = logFC , x = logFC_bulk_clusters , col = factor(prop))) +
+  geom_point(alpha = .75 , size = .75) +
+  theme_bw() +
+  scale_color_manual(values = cols[1:length(unique(bulk_de_stat$prop))] , name = "Prop. of\nperturbed\ncells") + 
+  geom_abline(slope = 1 , "linetype" = "dashed" , color = "black") + 
+  labs(x = "Estimated logFC in perturbed sub-population" , y = "logFC from DE test") 
+p2 = ggplot(df[df$cluster_purity > 0.1 & df$pval_corrected_across_nhoods < 0.1, ], aes(y = logFC , x = logFC_bulk_clusters , col = cluster_purity)) +
+  geom_point(alpha = .75 , size = .75) +
+  theme_bw() +
+  geom_abline(slope = 1 , "linetype" = "dashed" , color = "black") + 
+  scale_color_viridis(discrete = F , option = "cividis" , name = "Nhood\npurity") +
+  labs(x = "Estimated logFC in perturbed sub-population" , y = "logFC from DE test") 
+p = ggarrange(p1,p2)
+p
+ggsave(filename = paste0(figures.dir, "milo_de/scater_logFC", ".png"), plot = p, width = 10, height = 4)
+
+
+
+
+
+```
+
+
+## Robustness - based on k and on replicate of the simulation
+
+@@ talk to John what is the best way to show it
+
+```{r load-data, message = FALSE}
+
+
+
+
+
+
+```
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```
