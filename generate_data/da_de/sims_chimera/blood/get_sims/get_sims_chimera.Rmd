@@ -20,6 +20,7 @@ library(miloR)
 library(miloDE)
 library(dplyr)
 library(tibble)
+library(MouseGastrulationData)
 
 ncores = 37
 mcparam = MulticoreParam(workers = ncores)
@@ -36,6 +37,17 @@ source(paste0(root.dir , "am_hubmapMetaRef/functions/milo_functions.R"))
 # Load data
 
 ```{r load-data, message = FALSE}
+
+
+samples_e8.0 = AtlasSampleMetadata$sample[AtlasSampleMetadata$stage == "E8.0"]
+
+sce <- lapply(samples_e8.0 , function(sample){
+  out = EmbryoAtlasData(samples = sample)
+  return(out)
+})
+sce = do.call(cbind , sce)
+
+
 
 
 # load sce with embedding
