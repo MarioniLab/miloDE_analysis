@@ -6,14 +6,14 @@ err_folder=${my_folder}/clust_err/lung
 
 #SELECT SCRIPT
 #If you change this, you MUST update the wrapper's grep
-script_name=miloDA_da_de
+script_name=miloDA_da_de1
 
 #CHOOSE PARAMETERS
 #RAM in megabytes
 memory=600000
 r_command="rusage[mem=${memory}]"
 #num_processors
-nproc=20
+nproc=35
 
 
 smg=/hps/software/users/marioni/alsu/singularity/alsu_miloDE.simg

@@ -20,7 +20,7 @@ library(miloDE)
 library(stringr)
 library(dplyr)
 
-ncores = 24
+ncores = 42
 mcparam = MulticoreParam(workers = ncores)
 register(mcparam)
 set.seed(32)
@@ -30,11 +30,12 @@ source(paste0(root.dir , "miloDE_analysis/core_functions.R"))
 
 
 sims = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_splatter/sims.Rds"))
-
+simulated_genes = readRDS(paste0(root.dir , "data/processed/da_de/simulations_splatter/simulated_genes.Rds"))
 
 anno_1 = expand.grid(order = 1 , k = c(100,200) , seed = c(13,17,32))
-anno_2 = expand.grid(order = 2 , k = c(15,25) , seed = c(13,17,32))
+anno_2 = expand.grid(order = 2 , k = c(10,20) , seed = c(13,17,32))
 anno = rbind(anno_1 , anno_2)
+anno$id_nhood_assignment = paste0(anno$order , "_" , anno$k , "_" , anno$seed)
 
 
 ```
@@ -44,52 +45,103 @@ anno = rbind(anno_1 , anno_2)
 ```{r milo-de-stat, message = FALSE}
 
 
-get_milo_stat = function(sce_milo , reducedDim_name , pval.thresh = 0.1){
+get_de_selected_genes = function(sce_milo , genes){
+ 
+  current.nhoods = nhoods(sce_milo)
+  subset_nhoods = c(1:ncol(current.nhoods))
   
-  de_stat = miloDE::de_test_neighbourhoods(sce_milo , design = ~factor(Group) , covariates = c("sample" , "Group") , min_n_cells_per_sample = 1, min_count = 0 , verbose = F )
-  colnames(de_stat)[colnames(de_stat) == "gene"] = "Gene"
-  rowdata = as.data.frame(rowData(sce_milo))
-  de_stat = merge(de_stat , rowdata[, c("Gene" , "DEFacGroup2")] , all.x = T , all.y = F)
-  # change NaNs to 1
-  de_stat$pval_corrected_across_genes[is.na(de_stat$pval_corrected_across_genes)] = 1
-  # get combined stat per Nhood
-  stat = as.data.frame(de_stat %>% group_by(Nhood) %>% dplyr::summarise(
-    tp = sum(pval_corrected_across_genes <= pval.thresh & DEFacGroup2 != 1) ,
-    fp = sum(pval_corrected_across_genes <= pval.thresh & DEFacGroup2 == 1) , 
-    tn = sum(pval_corrected_across_genes > pval.thresh & DEFacGroup2 == 1) , 
-    fn = sum(pval_corrected_across_genes > pval.thresh & DEFacGroup2 != 1)
-  ))
-  stat$frac_DE = (stat$tp + stat$fp)/(stat$tp + stat$fp + stat$tn + stat$fn)
-  stat$n_DE = stat$tp + stat$fp
-  stat$reducedDim_name = reducedDim_name
-  return(stat)
+  de_stat = lapply(seq(length(subset_nhoods)) , function(i){
+    hood_id = subset_nhoods[i]
+    out = de_test_single_neighbourhood(sce_milo , nhoods_x = current.nhoods, hood_id = hood_id,
+                                           sample_id = "sample", design = ~type, covariates = c("type"), contrasts = NULL,
+                                           min_n_cells_per_sample = 1 ,
+                                           min_count = 1 , run_separately = T)
+    out = out[out$gene %in% genes , ]
+    return(out)
+  })
+  
+  # put together in SCE format
+  de_stat_sce = SingleCellExperiment(list(logFC = matrix(NA, nrow = nrow(sce_milo), ncol = length(subset_nhoods)) ,
+                                            pval = matrix(NA, nrow = nrow(sce_milo), ncol = length(subset_nhoods)) ,
+                                            pval_corrected_across_genes = matrix(NA, nrow = nrow(sce_milo), ncol = length(subset_nhoods))))
+  rownames(de_stat_sce) = rownames(sce_milo)
+  for (i in seq(length(de_stat))){
+    current.de_stat = de_stat[[i]]
+    assay(de_stat_sce , "logFC")[current.de_stat$gene , i] = current.de_stat$logFC
+    assay(de_stat_sce , "pval")[current.de_stat$gene , i] = current.de_stat$pval
+    assay(de_stat_sce , "pval_corrected_across_genes")[current.de_stat$gene , i] = current.de_stat$pval_corrected_across_genes
+  }
+
+  # add coldata on nhoods
+  meta_nhoods = lapply(seq(length(de_stat)) , function(i){
+    current.de_stat = de_stat[[i]]
+    current.meta = unique(current.de_stat[, c("Nhood" , "Nhood_center" , "test_performed" )])
+    return(current.meta)
+  })
+  meta_nhoods = do.call(rbind , meta_nhoods)
+  colData(de_stat_sce) = DataFrame(meta_nhoods)
+  colnames(de_stat_sce) = meta_nhoods$Nhood
+  
+  # select genes w at least one test
+  idx = which( rowMeans(is.na(assay(de_stat_sce , "pval"))) < 1)
+  de_stat_sce = de_stat_sce[idx , ]
+  
+  # pval correction
+  pval_corrected = lapply(rownames(de_stat_sce) , function(gene){
+    pvals = assay(de_stat_sce , "pval")[gene , ]
+    out = miloDE::spatial_pval_adjustment(nhoods_x = as.matrix(current.nhoods[,subset_nhoods]) , pvalues = pvals)
+    return(out)
+  })
+
+  # add the assay into final de-stat
+  assay_pval_corrected_across_nhoods = do.call(rbind , pval_corrected)
+  rownames(assay_pval_corrected_across_nhoods) = rownames(de_stat_sce)
+  colnames(assay_pval_corrected_across_nhoods) = colnames(de_stat_sce)
+  assay(de_stat_sce , "pval_corrected_across_nhoods") = assay_pval_corrected_across_nhoods
+  
+  # convert to data.frame
+  de_stat = convert_de_stat(de_stat_sce)
+  return(de_stat)
 }
+
+
 
 
 stat = bplapply(1:length(sims) , function(j){
   sim = sims[[j]]
-  stat_per_sim = lapply(1:nrow(anno) , function(i){
-    set.seed(anno$seed[i])
-    out_all = miloDE::assign_neighbourhoods(sim , reducedDim_name = "pca.all" , order = anno$order[i] , k = anno$k[i] , d = 5 , verbose = F , filtering = T)
-    out_all = get_milo_stat(out_all , "pca.all")
+  current.genes = simulated_genes[[j]]
+  if (nrow(current.genes) > 1){
+    stat_per_sim = lapply(1:nrow(anno) , function(i){
+      set.seed(anno$seed[i])
+      
+      out_all = miloDE::assign_neighbourhoods(sim , reducedDim_name = "pca.all" , order = anno$order[i] , k = anno$k[i] , d = 5 , verbose = F , filtering = T)
+      out_all = get_de_selected_genes(out_all , genes = current.genes$Gene)
+      out_all$reducedDim_name = "pca.all"
+      
+      out_hvgs = miloDE::assign_neighbourhoods(sim , reducedDim_name = "pca.hvgs" , order = anno$order[i] , k = anno$k[i] , d = 5 , verbose = F , filtering = T)
+      out_hvgs = get_de_selected_genes(out_hvgs , genes = current.genes$Gene)
+      out_hvgs$reducedDim_name = "pca.hvgs"
+      
+      out = rbind(out_all , out_hvgs)
+      
+      colnames(out)[colnames(out) == "gene"] = "Gene"
+      out = merge(out , current.genes , all.x = T)
+      out = cbind(out , anno[i , ])
+      return(out)
+    })
+    stat_per_sim = do.call(rbind , stat_per_sim)
     
-    set.seed(anno$seed[i])
-    out_not_de = miloDE::assign_neighbourhoods(sim , reducedDim_name = "pca.not_de" , order = anno$order[i] , k = anno$k[i] , d = 5 , verbose = F , filtering = T)
-    out_not_de = get_milo_stat(out_not_de , "pca.not_de")
-    out = rbind(out_all , out_not_de)
-    out = cbind(out , anno[i , ])
-    return(out)
-  })
-  stat_per_sim = do.call(rbind , stat_per_sim)
-  
-  id = names(sims)[j]
-  id = stringr::str_split(id , "_")
-  id = id[[1]]
-  stat_per_sim$batch_effect = as.logical(id[1])
-  stat_per_sim$de_prob = as.numeric(id[2])
-  stat_per_sim$de_facLoc = as.numeric(id[3])
-  stat_per_sim$round_sim = as.numeric(id[4])
-  
+    id = names(sims)[j]
+    stat_per_sim$id_sim = id
+    id = stringr::str_split(id , "_")
+    id = id[[1]]
+    stat_per_sim$round_sim = as.numeric(id[1])
+    stat_per_sim$n_markers = as.numeric(id[4])
+    stat_per_sim$n_not_markers = as.numeric(id[9])
+  }
+  else {
+    stat_per_sim = NULL
+  }
   return(stat_per_sim)
 } , BPPARAM = mcparam)
 stat = do.call(rbind , stat)

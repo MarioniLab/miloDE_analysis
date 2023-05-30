@@ -35,8 +35,9 @@ library(BiocSingular)
 library(miloR)
 library(miloDE)
 library(S4Vectors)
+library(slingshot)
 
-ncores = 30
+ncores = 25
 mcparam = MulticoreParam(workers = ncores)
 register(mcparam)
 
@@ -45,9 +46,29 @@ set.seed(32)
 root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
 
 simulated_genes = readRDS(file = paste0(root.dir , "data/processed/simulations/brain/simulated_genes.Rds"))
-sces = readRDS(paste0(root.dir , "data/processed/simulations/brain/sces_simulated.Rds"))
+sces = readRDS(paste0(root.dir , "data/processed/simulations/cardiomyocytes/sces_simulated.Rds"))
 
-cluster_splits = list(c(8) , c(3) , c(5) ,c(1,7) ,  c(5,8) , c(3,6)  , c(3,2,6) , c(1,4,5,7) , c(1,4,5,7,2) , c(1,2,3,4,5,6,7))
+
+sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/mouse_embryo_wt_chimera.Rds"))
+sce = sce[, sce$celltype == "Cardiomyocytes"]
+set.seed(32)
+slingshot_res <- slingPseudotime(slingshot(as.matrix(reducedDim(sce , "mnn_unsupervised_wt"))))
+sce$pt = as.numeric(slingshot_res)
+pt_grid = sapply(seq(0,1,0.01) , function(i) return(as.numeric(quantile(sce$pt , i))))
+
+cluster_splits = list(c(pt_grid[1] , pt_grid[3]) , 
+                      c(pt_grid[49] , pt_grid[51]),
+                      c(pt_grid[99] , pt_grid[101]),
+                      c(pt_grid[1] , pt_grid[6]) , 
+                      c(pt_grid[47] , pt_grid[53]),
+                      c(pt_grid[95] , pt_grid[101]),
+                      c(pt_grid[1] , pt_grid[11]) , 
+                      c(pt_grid[45] , pt_grid[55]),
+                      c(pt_grid[91] , pt_grid[101]),
+                      c(pt_grid[1] , pt_grid[26]) , 
+                      c(pt_grid[37] , pt_grid[63]),
+                      c(pt_grid[75] , pt_grid[101])
+                      )
 
 
 ```
@@ -162,8 +183,8 @@ add_da = function(sce_milo , reducedDim_name , sample_id = "sample", condition_i
 }
 
 
-add_stat = function(sce_milo , clusters){
-  stat_da = add_da(sce_milo , reducedDim_name = "scvi_supervised_wt" , sample_id = "sample", condition_id = "type", col_annotate = NULL)
+add_stat = function(sce_milo){
+  stat_da = add_da(sce_milo , reducedDim_name = "mnn_unsupervised_wt" , sample_id = "sample", condition_id = "type", col_annotate = NULL)
   stat_da = stat_da[, c("Nhood", "logFC" , "SpatialFDR" )]
   colnames(stat_da) = c("Nhood", "logFC_DA" , "SpatialFDR_DA" )
   
@@ -178,7 +199,7 @@ add_stat = function(sce_milo , clusters){
   stat_da$cluster_purity = sapply(1:ncol(nhoods_sce) , function(i){
     current.cells = which(nhoods_sce[,i] == 1)
     current.cells = rownames(nhoods_sce)[current.cells]
-    out = mean(current.cells %in% sce_milo$cell[sce_milo$cluster %in% clusters])
+    out = mean(current.cells %in% sce_milo$cell[sce_milo$perturbed == T])
     return(out)
   })
   
@@ -193,7 +214,6 @@ add_stat = function(sce_milo , clusters){
 ## Original embedding
 
 ```{r milo-de-orginal, message = FALSE}
-
 
 
 anno = expand.grid(order = 2, k = seq(15,30,5), prop = c(0.1), round = c(1:3))
@@ -213,15 +233,15 @@ sces_milo = lapply(sces , function(sce){
 stat = lapply(1:length(sces_milo) , function(j){
   sce_milo = sces_milo[[j]]
   stat_per_sce = lapply(1:nrow(anno) , function(i){
-    print(i)
     current.sce = sce_milo[[i]]
+    current.sce$perturbed = current.sce$pt >= cluster_splits[[j]][1] & current.sce$pt <= cluster_splits[[j]][2]
     rowdata = as.data.frame(rowData(current.sce))
   
     stat_de = get_de_selected_genes(current.sce , genes = simulated_genes$ENSEMBL)
     colnames(stat_de)[colnames(stat_de) == "gene"] = "ENSEMBL"
     stat_de = merge(stat_de , rowdata , all.x = T)
     
-    milo_stat = add_stat(current.sce , cluster_splits[[j]])
+    milo_stat = add_stat(current.sce)
     stat_de = merge(stat_de , milo_stat , all.x = T)
     
     stat_de = cbind(stat_de , anno[i , c("order" , "k" , "round" , "id")])
@@ -230,7 +250,7 @@ stat = lapply(1:length(sces_milo) , function(j){
   stat_per_sce = do.call(rbind , stat_per_sce)
   return(stat_per_sce)
 })
-saveRDS(stat , file = paste0(root.dir , "data/processed/simulations/brain/milo_de_stat__original_embedding.Rds"))
+saveRDS(stat , file = paste0(root.dir , "data/processed/simulations/cardiomyocytes/milo_de_stat__original_embedding.Rds"))
 
 
 
@@ -259,15 +279,15 @@ sces_milo = lapply(sces , function(sce){
 stat = lapply(1:length(sces_milo) , function(j){
   sce_milo = sces_milo[[j]]
   stat_per_sce = lapply(1:nrow(anno) , function(i){
-    print(i)
     current.sce = sce_milo[[i]]
+    current.sce$perturbed = current.sce$pt >= cluster_splits[[j]][1] & current.sce$pt <= cluster_splits[[j]][2]
     rowdata = as.data.frame(rowData(current.sce))
   
     stat_de = get_de_selected_genes(current.sce , genes = simulated_genes$ENSEMBL)
     colnames(stat_de)[colnames(stat_de) == "gene"] = "ENSEMBL"
     stat_de = merge(stat_de , rowdata , all.x = T)
     
-    milo_stat = add_stat(current.sce , cluster_splits[[j]])
+    milo_stat = add_stat(current.sce)
     stat_de = merge(stat_de , milo_stat , all.x = T)
     
     stat_de = cbind(stat_de , anno[i , c("order" , "k" , "round" , "id")])
@@ -276,7 +296,7 @@ stat = lapply(1:length(sces_milo) , function(j){
   stat_per_sce = do.call(rbind , stat_per_sce)
   return(stat_per_sce)
 })
-saveRDS(stat , file = paste0(root.dir , "data/processed/simulations/brain/milo_de_stat__recalculated_embedding.Rds"))
+saveRDS(stat , file = paste0(root.dir , "data/processed/simulations/cardiomyocytes/milo_de_stat__recalculated_embedding.Rds"))
 
 
 

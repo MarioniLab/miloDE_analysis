@@ -10,7 +10,7 @@
 
 
 
-<meta name="date" content="2023-05-12" />
+<meta name="date" content="2023-05-16" />
 
 <title>Run miloDE for different neighbourhood assignements of simulated data.</title>
 
@@ -783,7 +783,7 @@ function toggle_visibility(id1) {
 
 
 <h1 class="title toc-ignore">Run miloDE for different neighbourhood assignements of simulated data.</h1>
-<h4 class="date">12 May 2023</h4>
+<h4 class="date">16 May 2023</h4>
 
 </div>
 
@@ -791,10 +791,13 @@ function toggle_visibility(id1) {
 <div id="TOC">
 <ul>
 <li><a href="#load-dependencies" id="toc-load-dependencies"><span class="toc-section-number">1</span> Load dependencies</a></li>
-<li><a href="#get-sce-milo" id="toc-get-sce-milo"><span class="toc-section-number">2</span> Get sce-milo</a></li>
-<li><a href="#functions" id="toc-functions"><span class="toc-section-number">3</span> Functions</a></li>
-<li><a href="#run-milode" id="toc-run-milode"><span class="toc-section-number">4</span> Run miloDE</a></li>
-<li><a href="#session-info" id="toc-session-info"><span class="toc-section-number">5</span> Session Info</a></li>
+<li><a href="#functions" id="toc-functions"><span class="toc-section-number">2</span> Functions</a></li>
+<li><a href="#run-milode" id="toc-run-milode"><span class="toc-section-number">3</span> Run miloDE</a>
+<ul>
+<li><a href="#original-embedding" id="toc-original-embedding"><span class="toc-section-number">3.1</span> Original embedding</a></li>
+<li><a href="#re-calculated-embedding" id="toc-re-calculated-embedding"><span class="toc-section-number">3.2</span> Re-calculated embedding</a></li>
+</ul></li>
+<li><a href="#session-info" id="toc-session-info"><span class="toc-section-number">4</span> Session Info</a></li>
 </ul>
 </div>
 
@@ -838,23 +841,8 @@ sces = readRDS(paste0(root.dir , &quot;data/processed/simulations/brain/sces_sim
 
 cluster_splits = list(c(8) , c(3) , c(5) ,c(1,7) ,  c(5,8) , c(3,6)  , c(3,2,6) , c(1,4,5,7) , c(1,4,5,7,2) , c(1,2,3,4,5,6,7))</code></pre>
 </div>
-<div id="get-sce-milo" class="section level1" number="2">
-<h1><span class="header-section-number">2</span> Get sce-milo</h1>
-<p>We wont be saving this coz its easy to recalc and it weights a lot</p>
-<pre class="r"><code>anno = expand.grid(order = 2, k = seq(15,30,5), prop = c(0.1), round = c(1:5))
-anno$id = paste0(anno$order , &quot;_&quot; , anno$k , &quot;_&quot; , anno$round)
-
-sces_milo = lapply(sces , function(sce){
-  sce_milo = bplapply(1:nrow(anno) , function(i){
-    set.seed(anno$round[i])
-    out = miloDE::assign_neighbourhoods(sce , k = anno$k[i], prop = anno$prop[i] , order = anno$order[i] , reducedDim_name = &quot;scvi_supervised_wt&quot; , filtering = T)
-    return(out)
-  }, BPPARAM = mcparam)
-  return(sce_milo)
-})</code></pre>
-</div>
-<div id="functions" class="section level1" number="3">
-<h1><span class="header-section-number">3</span> Functions</h1>
+<div id="functions" class="section level1" number="2">
+<h1><span class="header-section-number">2</span> Functions</h1>
 <pre class="r"><code>get_de_selected_genes = function(sce_milo , genes){
  
   current.nhoods = nhoods(sce_milo)
@@ -982,9 +970,25 @@ add_stat = function(sce_milo , clusters){
   return(stat_da)
 }</code></pre>
 </div>
-<div id="run-milode" class="section level1" number="4">
-<h1><span class="header-section-number">4</span> Run miloDE</h1>
-<pre class="r"><code>stat = lapply(1:length(sces_milo) , function(j){
+<div id="run-milode" class="section level1" number="3">
+<h1><span class="header-section-number">3</span> Run miloDE</h1>
+<div id="original-embedding" class="section level2" number="3.1">
+<h2><span class="header-section-number">3.1</span> Original embedding</h2>
+<pre class="r"><code>anno = expand.grid(order = 2, k = seq(15,30,5), prop = c(0.1), round = c(1:3))
+anno$id = paste0(anno$order , &quot;_&quot; , anno$k , &quot;_&quot; , anno$round)
+
+# We wont be saving this coz its easy to recalc and it weights a lot
+sces_milo = lapply(sces , function(sce){
+  sce_milo = bplapply(1:nrow(anno) , function(i){
+    set.seed(anno$round[i])
+    out = miloDE::assign_neighbourhoods(sce , k = anno$k[i], prop = anno$prop[i] , order = anno$order[i] , reducedDim_name = &quot;mnn_unsupervised_wt&quot; , filtering = T)
+    return(out)
+  }, BPPARAM = mcparam)
+  return(sce_milo)
+})
+
+
+stat = lapply(1:length(sces_milo) , function(j){
   sce_milo = sces_milo[[j]]
   stat_per_sce = lapply(1:nrow(anno) , function(i){
     print(i)
@@ -1098,7 +1102,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 13</code></pre>
+<pre><code>## [1] 1</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1106,7 +1110,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 14</code></pre>
+<pre><code>## [1] 2</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1114,7 +1118,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 15</code></pre>
+<pre><code>## [1] 3</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1122,7 +1126,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 16</code></pre>
+<pre><code>## [1] 4</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1130,7 +1134,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 17</code></pre>
+<pre><code>## [1] 5</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1138,7 +1142,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 18</code></pre>
+<pre><code>## [1] 6</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1146,7 +1150,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 19</code></pre>
+<pre><code>## [1] 7</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1154,7 +1158,39 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 20</code></pre>
+<pre><code>## [1] 8</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 9</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 10</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 11</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 12</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1258,7 +1294,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 13</code></pre>
+<pre><code>## [1] 1</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1266,7 +1302,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 14</code></pre>
+<pre><code>## [1] 2</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1274,7 +1310,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 15</code></pre>
+<pre><code>## [1] 3</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1282,7 +1318,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 16</code></pre>
+<pre><code>## [1] 4</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1290,7 +1326,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 17</code></pre>
+<pre><code>## [1] 5</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1298,7 +1334,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 18</code></pre>
+<pre><code>## [1] 6</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1306,7 +1342,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 19</code></pre>
+<pre><code>## [1] 7</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1314,7 +1350,39 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 20</code></pre>
+<pre><code>## [1] 8</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 9</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 10</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 11</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 12</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1418,7 +1486,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 13</code></pre>
+<pre><code>## [1] 1</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1426,7 +1494,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 14</code></pre>
+<pre><code>## [1] 2</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1434,7 +1502,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 15</code></pre>
+<pre><code>## [1] 3</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1442,7 +1510,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 16</code></pre>
+<pre><code>## [1] 4</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1450,7 +1518,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 17</code></pre>
+<pre><code>## [1] 5</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1458,7 +1526,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 18</code></pre>
+<pre><code>## [1] 6</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1466,7 +1534,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 19</code></pre>
+<pre><code>## [1] 7</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1474,7 +1542,39 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 20</code></pre>
+<pre><code>## [1] 8</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 9</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 10</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 11</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 12</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1578,7 +1678,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 13</code></pre>
+<pre><code>## [1] 1</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1586,7 +1686,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 14</code></pre>
+<pre><code>## [1] 2</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1594,7 +1694,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 15</code></pre>
+<pre><code>## [1] 3</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1602,7 +1702,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 16</code></pre>
+<pre><code>## [1] 4</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1610,7 +1710,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 17</code></pre>
+<pre><code>## [1] 5</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1618,7 +1718,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 18</code></pre>
+<pre><code>## [1] 6</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1626,7 +1726,7 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 19</code></pre>
+<pre><code>## [1] 7</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1634,7 +1734,39 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 20</code></pre>
+<pre><code>## [1] 8</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 9</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 10</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 11</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 12</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
 ## Reordering
@@ -1738,70 +1870,6 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 13</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 14</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 15</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 16</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 17</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 18</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 19</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 20</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
 <pre><code>## [1] 1</code></pre>
 <pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : Sample names in design matrix and nhood counts are not matched.
@@ -1898,714 +1966,1007 @@ add_stat = function(sce_milo , clusters){
 ## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
 ## sce_design, : row names were found from a short variable and have been
 ## discarded</code></pre>
-<pre><code>## [1] 13</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 14</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 15</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 16</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 17</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 18</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 19</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 20</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 1</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 2</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 3</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 4</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 5</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 6</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 7</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 8</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 9</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 10</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 11</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 12</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 13</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 14</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 15</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 16</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 17</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 18</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 19</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 20</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 1</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 2</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 3</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 4</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 5</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 6</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 7</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 8</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 9</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 10</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 11</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 12</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 13</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 14</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 15</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 16</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 17</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 18</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 19</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 20</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 1</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 2</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 3</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 4</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 5</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 6</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 7</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 8</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 9</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 10</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 11</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 12</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 13</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 14</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 15</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 16</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 17</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 18</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 19</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 20</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 1</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 2</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 3</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 4</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 5</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 6</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 7</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 8</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 9</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 10</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 11</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 12</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 13</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 14</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 15</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 16</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 17</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 18</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 19</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre><code>## [1] 20</code></pre>
-<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : Sample names in design matrix and nhood counts are not matched.
-## Reordering
-
-## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
-## sce_design, : row names were found from a short variable and have been
-## discarded</code></pre>
-<pre class="r"><code>saveRDS(stat , file = paste0(root.dir , &quot;data/processed/simulations/brain/milo_de_stat.Rds&quot;))</code></pre>
+<pre class="r"><code>saveRDS(stat , file = paste0(root.dir , &quot;data/processed/simulations/brain/milo_de_stat__original_embedding.Rds&quot;))</code></pre>
 </div>
-<div id="session-info" class="section level1" number="5">
-<h1><span class="header-section-number">5</span> Session Info</h1>
+<div id="re-calculated-embedding" class="section level2" number="3.2">
+<h2><span class="header-section-number">3.2</span> Re-calculated embedding</h2>
+<pre class="r"><code>anno = expand.grid(order = 2, k = seq(15,30,5), prop = c(0.1), round = c(1:3))
+anno$id = paste0(anno$order , &quot;_&quot; , anno$k , &quot;_&quot; , anno$round)
+
+# We wont be saving this coz its easy to recalc and it weights a lot
+sces_milo = lapply(sces , function(sce){
+  sce_milo = bplapply(1:nrow(anno) , function(i){
+    set.seed(anno$round[i])
+    out = miloDE::assign_neighbourhoods(sce , k = anno$k[i], prop = anno$prop[i] , order = anno$order[i] , reducedDim_name = &quot;pca.simulations&quot; , filtering = T)
+    return(out)
+  }, BPPARAM = mcparam)
+  return(sce_milo)
+})
+
+
+stat = lapply(1:length(sces_milo) , function(j){
+  sce_milo = sces_milo[[j]]
+  stat_per_sce = lapply(1:nrow(anno) , function(i){
+    print(i)
+    current.sce = sce_milo[[i]]
+    rowdata = as.data.frame(rowData(current.sce))
+  
+    stat_de = get_de_selected_genes(current.sce , genes = simulated_genes$ENSEMBL)
+    colnames(stat_de)[colnames(stat_de) == &quot;gene&quot;] = &quot;ENSEMBL&quot;
+    stat_de = merge(stat_de , rowdata , all.x = T)
+    
+    milo_stat = add_stat(current.sce , cluster_splits[[j]])
+    stat_de = merge(stat_de , milo_stat , all.x = T)
+    
+    stat_de = cbind(stat_de , anno[i , c(&quot;order&quot; , &quot;k&quot; , &quot;round&quot; , &quot;id&quot;)])
+    return(stat_de)
+  })
+  stat_per_sce = do.call(rbind , stat_per_sce)
+  return(stat_per_sce)
+})</code></pre>
+<pre><code>## [1] 1</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering</code></pre>
+<pre><code>## Warning in data.frame(..., check.names = FALSE): row names were found from a
+## short variable and have been discarded</code></pre>
+<pre><code>## [1] 2</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 3</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 4</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 5</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 6</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 7</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 8</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 9</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 10</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 11</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 12</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 1</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 2</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 3</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 4</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 5</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 6</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 7</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 8</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 9</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 10</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 11</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 12</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 1</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 2</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 3</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 4</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 5</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 6</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 7</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 8</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 9</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 10</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 11</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 12</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 1</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 2</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 3</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 4</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 5</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 6</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 7</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 8</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 9</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 10</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 11</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 12</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 1</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 2</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 3</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 4</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 5</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 6</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 7</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 8</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 9</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 10</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 11</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 12</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 1</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 2</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 3</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 4</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 5</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 6</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 7</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 8</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 9</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 10</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 11</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 12</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 1</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 2</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 3</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 4</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 5</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 6</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 7</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 8</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 9</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 10</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 11</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 12</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 1</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 2</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 3</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 4</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 5</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 6</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 7</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 8</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 9</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 10</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 11</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 12</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 1</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 2</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 3</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 4</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 5</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 6</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 7</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 8</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 9</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 10</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 11</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 12</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 1</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 2</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 3</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 4</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 5</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 6</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 7</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 8</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 9</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 10</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 11</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre><code>## [1] 12</code></pre>
+<pre><code>## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : Sample names in design matrix and nhood counts are not matched.
+## Reordering
+
+## Warning in testNhoods(sce_milo, design = ~factor(condition_id), design.df =
+## sce_design, : row names were found from a short variable and have been
+## discarded</code></pre>
+<pre class="r"><code>saveRDS(stat , file = paste0(root.dir , &quot;data/processed/simulations/brain/milo_de_stat__recalculated_embedding.Rds&quot;))</code></pre>
+</div>
+</div>
+<div id="session-info" class="section level1" number="4">
+<h1><span class="header-section-number">4</span> Session Info</h1>
 <pre class="r"><code>sessionInfo()</code></pre>
 <pre><code>## R version 4.2.2 (2022-10-31)
 ## Platform: x86_64-pc-linux-gnu (64-bit)

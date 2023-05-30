@@ -30,8 +30,8 @@ source(paste0(root.dir , "miloDE_analysis/core_functions.R"))
 
 sims = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_chimera/blood/sces_simulated.Rds"))
 
-anno_1 = expand.grid(order = 1 , k = c(75,150) , seed = c(13,17,32))
-anno_2 = expand.grid(order = 2 , k = c(10,15) , seed = c(13,17,32))
+anno_1 = expand.grid(order = 1 , k = c(100,200) , seed = c(13,17,32))
+anno_2 = expand.grid(order = 2 , k = c(15,25) , seed = c(13,17,32))
 anno = rbind(anno_1 , anno_2)
 
 
@@ -46,7 +46,7 @@ stat = bplapply(sims , function(sim){
   stat_per_sim = lapply(1:nrow(anno) , function(i){
     
     set.seed(anno$seed[i])
-    out = miloDE::assign_neighbourhoods(sim , reducedDim_name = "pca.simulations" , order = anno$order[i] , k = anno$k[i] , d = 10 , verbose = F , filtering = T)
+    out = miloDE::assign_neighbourhoods(sim , reducedDim_name = "pca.simulations" , order = anno$order[i] , k = anno$k[i] , d = 5 , verbose = F , filtering = T)
     
     out = nhoods(out)
     return(out)

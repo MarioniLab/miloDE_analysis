@@ -6,7 +6,7 @@ err_folder=${my_folder}/clust_err/lung
 
 #SELECT SCRIPT
 #If you change this, you MUST update the wrapper's grep
-script_name=milo_da_de
+script_name=milo_da_de_1
 
 #CHOOSE PARAMETERS
 #RAM in megabytes

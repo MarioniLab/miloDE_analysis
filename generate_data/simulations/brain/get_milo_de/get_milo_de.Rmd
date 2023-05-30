@@ -36,7 +36,7 @@ library(miloR)
 library(miloDE)
 library(S4Vectors)
 
-ncores = 30
+ncores = 35
 mcparam = MulticoreParam(workers = ncores)
 register(mcparam)
 
