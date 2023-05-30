@@ -1,0 +1,176 @@
+---
+title: "This pipeline to generate sims for DA-DE analysis"
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+```{r load, message = FALSE}
+
+library(SingleCellExperiment)
+library(BiocParallel)
+library(geneBasisR)
+library(splatter)
+library(scran)
+ncores = 35
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+set.seed(32)
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+source(paste0(root.dir , "miloDE_analysis/core_functions.R"))
+
+
+```
+
+# Estimate parameters
+
+```{r splatter-pars, message = FALSE}
+
+
+sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/WT/mouse_embryo_E8.5.Rds"))
+sce = sce[, sce$sample == 17]
+sce = logNormCounts(sce)
+sce = retain_informative_genes(sce , n = 1000)
+counts(sce) = as.matrix(counts(sce))
+
+params = splatEstimate( sce )
+
+
+```
+
+# Get base simulation
+
+```{r base-sim, message = FALSE}
+
+
+
+sim = splatSimulateGroups(params, group.prob = c(0.5,0.5), de.prob = c(0,0.1) , batchCells = rep(2000,4), verbose = FALSE,  out.prob = 0 , batch.rmEffect = T , de.downProb = 0 )
+
+colnames(colData(sim))[colnames(colData(sim)) == "Batch"] = "sample"
+sim$type = sapply(1:ncol(sim) , function(i) ifelse(sim$sample[i] %in% c("Batch1" , "Batch2") , "cond_A", "cond_B"))
+#
+sim = SingleCellExperiment(list(counts = as(counts(sim),"dgCMatrix")) , 
+                           rowData = rowData(sim) , colData = colData(sim) )
+sim = scuttle::logNormCounts(sim)
+
+# select genes
+rowdata = as.data.frame(rowData(sim))
+rowdata$avg_counts = rowMeans(counts(sim))
+
+genes_hvg = rowdata$Gene[!rowdata$DEFacGroup2 == 1]
+genes_not_hvg = rowdata$Gene[rowdata$DEFacGroup2 == 1]
+
+
+```
+
+# Generate datsets
+
+## Select genes
+
+```{r genes, message = FALSE}
+
+
+n_genes.grid = sapply(c(0 , 0.025 , 0.05 , 0.1 , 0.15 , 0.2 , 0.25 , 0.3 , 0.4 , 0.5 , 0.75 , 1) , function(i) return(round(length(genes_hvg) * i)))
+
+anno = expand.grid(round = c(1:3) , n_markers = n_genes.grid , n_not_markers = n_genes.grid)
+anno$id = paste0(anno$round , "_n_markers_" , anno$n_markers , "__n_not_markers_" , anno$n_not_markers)
+
+genes_2_simulate = lapply(1:nrow(anno) , function(i){
+  out = data.frame(Gene = c(sample(rowdata$Gene[!rowdata$DEFacGroup2 == 1] , anno$n_markers[i]) , sample(rowdata$Gene[rowdata$DEFacGroup2 == 1] , anno$n_not_markers[i])))
+  out$gene_type = c(rep("marker" , anno$n_markers[i]) , rep("not_marker" , anno$n_not_markers[i]))
+  out = merge(out , rowdata , all.x = T , all.y = F)
+  out$range = ceiling(out$avg_counts/2)
+  return(out)
+})
+names(genes_2_simulate) = anno$id
+
+
+```
+
+## Add simulated counts
+
+```{r add-sim-counts, message = FALSE}
+
+
+
+add_simulated_counts <- function(sce, gene, range){
+  counts = counts(sce)
+  current.counts = counts[gene, ]
+  idx_2_change = which(sce$type == "cond_B" & sce$Group == "Group1")
+  current.counts[idx_2_change] = current.counts[idx_2_change] + floor(runif(length(idx_2_change), min=max(range-1,0), max=range+1))
+  counts[gene, ] = current.counts
+  counts(sce) = counts
+  return(sce)
+}
+
+
+
+sces = bplapply(genes_2_simulate , function(current.genes_2_simulate){
+  sce_simulated = sim
+  if (nrow(current.genes_2_simulate) > 1){
+    for (i in 1:nrow(current.genes_2_simulate)){
+      sce_simulated = add_simulated_counts(sce_simulated, 
+                               gene = current.genes_2_simulate$Gene[i], 
+                               range = current.genes_2_simulate$range[i] )
+    
+    }
+  }
+  sce_simulated = scuttle::logNormCounts(sce_simulated)
+  # add re-computed embedding
+  sce_simulated = add_batch_corrected_pca(sce_simulated, genes = genes_hvg, reduced.dim_name = "pca.hvgs" , batch = "sample" , d = 10 , correct = F)
+  sce_simulated = add_batch_corrected_pca(sce_simulated, genes = rowdata$Gene, reduced.dim_name = "pca.all" , batch = "sample" , d = 10 , correct = F)
+  return(sce_simulated)
+}, BPPARAM = mcparam)
+names(sces) = anno$id
+saveRDS(sces , file = paste0(root.dir , "data/processed/da_de/simulations_random/sims.Rds"))
+
+
+```
+
+## Add lfc info for genes
+
+```{r add-lfc-stat, message = FALSE}
+
+
+
+get_de_stat = function(sce , genes){
+  require(tibble)
+  require(edgeR)
+  current.sce = sce[, sce$Group == "Group1"]
+  summed = summarizeAssayByGroup(counts(current.sce), colData(current.sce)[,c("sample","type")])
+  y <- DGEList(assay(summed, "sum"), samples=colData(summed), lib.size = colSums(assay(summed , "sum")))
+  y <- calcNormFactors(y)
+  design <- model.matrix(~ factor(type), y$samples)
+  y <- estimateDisp(y, design)
+  fit <- glmQLFit(y, design, robust=TRUE)
+  res <- glmQLFTest(fit, coef=ncol(design))
+  out = topTags(res, n = Inf )
+  out = as.data.frame(out)
+  out = rownames_to_column(out , var = "Gene")
+  out = out[out$Gene %in% genes , c("Gene" , "logFC" , "PValue" , "FDR")]
+  colnames(out) = c("Gene" , "logFC_bulk" , "PValue_bulk" , "FDR_bulk")
+  return(out)
+}
+
+genes_2_simulate = bplapply(1:length(genes_2_simulate) , function(i){
+  current.genes = genes_2_simulate[[i]]
+  de_stat = get_de_stat(sces[[i]] , genes = current.genes$Gene)
+  current.genes = merge(current.genes , de_stat)
+  return(current.genes)
+} , BPPARAM = mcparam)
+names(genes_2_simulate) = anno$id
+saveRDS(genes_2_simulate , file = paste0(root.dir , "data/processed/da_de/simulations_random/simulated_genes.Rds"))
+
+
+
+```
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

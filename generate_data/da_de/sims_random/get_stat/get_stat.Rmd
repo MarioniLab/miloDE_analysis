@@ -1,0 +1,93 @@
+---
+title: "This pipeline to get joint final stat on DA-DE analysis"
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+```{r load, message = FALSE}
+
+library(SingleCellExperiment)
+library(BiocParallel)
+library(geneBasisR)
+library(splatter)
+library(scran)
+library(miloR)
+library(miloDE)
+library(stringr)
+library(dplyr)
+
+ncores = 35
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+set.seed(32)
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+source(paste0(root.dir , "miloDE_analysis/core_functions.R"))
+
+
+# generated simulation data
+sces = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_random/sims.Rds"))
+simulated_genes = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_random/simulated_genes.Rds"))
+stat_da = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_random/stat_da.Rds"))
+stat_de = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_random/stat_de.Rds"))
+
+```
+
+# Get stat
+
+## All genes combined
+
+```{r stat-all-genes-comb, message = FALSE}
+
+
+get_stat_per_sim_and_nhood_assignment = function(id_sim , id_nhood_assignment , reducedDim_name , spatialFDR_DA.thresh = 0.1 , spatialFDR_DE.thresh = 0.1){
+  current.stat_da = stat_da[stat_da$id_sim == id_sim & stat_da$id_nhood_assignment == id_nhood_assignment & stat_da$reducedDim_name == reducedDim_name, ]
+  current.stat_da = as.data.frame(current.stat_da %>% group_by(id_sim , id_nhood_assignment , reducedDim_name) %>%
+                                    dplyr::summarise(frac_hoods_DA = mean(SpatialFDR <= spatialFDR_DA.thresh , na.rm = T)))
+
+
+  current.stat_de = stat_de[stat_de$id_sim == id_sim & stat_de$id_nhood_assignment == id_nhood_assignment & stat_de$reducedDim_name == reducedDim_name, ]
+  if (nrow(current.stat_de) > 0){
+    #current.stat_de$logFC_bulk = round(current.stat_de$logFC_bulk)
+    current.stat_de = as.data.frame(current.stat_de %>% group_by(id_sim , id_nhood_assignment , reducedDim_name , Gene , gene_type ) %>%
+                                      dplyr::summarise(frac_hoods_DE = mean(pval_corrected_across_nhoods <= spatialFDR_DE.thresh , na.rm = T)))
+    current.stat_de = as.data.frame(current.stat_de %>% group_by(id_sim , id_nhood_assignment , reducedDim_name , gene_type) %>%
+                                      dplyr::summarise(frac_hoods_DE = mean(frac_hoods_DE)))
+  } else {
+    current.stat_de = data.frame(id_sim = rep(id_sim,2) , id_nhood_assignment = rep(id_nhood_assignment,2) ,
+                                 reducedDim_name = rep(reducedDim_name , 2) , gene_type = c("marker" , "not_marker") , frac_hoods_DE = c(NaN , NaN))
+  }
+
+  out = merge(current.stat_da , current.stat_de , by = c("id_sim" , "id_nhood_assignment" , "reducedDim_name"))
+  out$reducedDim_name = as.character(reducedDim_name)
+  out$id_sim = as.character(id_sim)
+  out$id_nhood_assignment = as.character(id_nhood_assignment)
+  out = merge(out , unique(stat_da[, c("id_sim" , "n_hvgs" , "n_not_hvgs", "round_sim" , "order" , "k" , "seed" , "id_nhood_assignment" , "reducedDim_name")]) ,
+             by = c("id_sim" , "id_nhood_assignment" , "reducedDim_name") , all.x = T , all.y = F)
+  return(out)
+}
+
+
+anno_sims = expand.grid(id_sim = unique(stat_da$id_sim), id_nhood_assignment = unique(stat_da$id_nhood_assignment) ,  reducedDim_name = unique(stat_da$reducedDim_name))
+
+stat = bplapply(1:nrow(anno_sims) , function(i){
+  out = get_stat_per_sim_and_nhood_assignment(anno_sims$id_sim[i] , anno_sims$id_nhood_assignment[i] , anno_sims$reducedDim_name[i])
+  return(out)
+} , BPPARAM = mcparam)
+stat = do.call(rbind , stat)
+
+saveRDS(stat , file = paste0(root.dir , "data/processed/da_de/simulations_random/stat_combined_all_genes.Rds"))
+
+
+```
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```
