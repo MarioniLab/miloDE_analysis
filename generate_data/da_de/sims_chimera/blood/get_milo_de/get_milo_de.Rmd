@@ -20,7 +20,7 @@ library(miloDE)
 library(stringr)
 library(dplyr)
 
-ncores = 30
+ncores = 38
 mcparam = MulticoreParam(workers = ncores)
 register(mcparam)
 set.seed(32)
@@ -32,50 +32,15 @@ source(paste0(root.dir , "miloDE_analysis/core_functions.R"))
 sims = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_chimera/blood/sces_simulated.Rds"))
 simulated_genes = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_chimera/blood/simulated_genes.Rds"))
 
-anno_1 = expand.grid(order = 1 , k = c(75,150) , seed = c(13,17,32))
-anno_2 = expand.grid(order = 2 , k = c(10,15) , seed = c(13,17,32))
+anno_1 = expand.grid(order = 1 , k = c(100,200) , seed = c(13,17,32))
+anno_2 = expand.grid(order = 2 , k = c(15,25) , seed = c(13,17,32))
 anno = rbind(anno_1 , anno_2)
+anno$id_nhood_assignment = paste0(anno$order , "_" , anno$k , "_" , anno$seed)
 
 
 ```
 
-# Add stat for simulated genes
 
-```{r sim-genes-stat, message = FALSE}
-
-
-get_de_stat = function(sce , celltype = "Erythroid2", genes){
-  require(tibble)
-  require(edgeR)
-  current.sce = sce[, sce$celltype == celltype]
-  summed = summarizeAssayByGroup(counts(current.sce), colData(current.sce)[,c("sample","type")])
-  y <- DGEList(assay(summed, "sum"), samples=colData(summed), lib.size = colSums(assay(summed , "sum")))
-  y <- calcNormFactors(y)
-  design <- model.matrix(~ factor(type), y$samples)
-  y <- estimateDisp(y, design)
-  fit <- glmQLFit(y, design, robust=TRUE)
-  res <- glmQLFTest(fit, coef=ncol(design))
-  out = topTags(res, n = Inf )
-  out = as.data.frame(out)
-  out = rownames_to_column(out , var = "ENSEMBL")
-  out = out[out$ENSEMBL %in% genes , c("ENSEMBL" , "logFC" , "PValue" , "FDR")]
-  colnames(out) = c("ENSEMBL" , "logFC_bulk" , "PValue_bulk" , "FDR_bulk")
-  return(out)
-}
-
-
-simulated_genes = bplapply(1:length(simulated_genes) , function(i){
-  current.genes = simulated_genes[[i]]
-  de_stat = get_de_stat(sims[[i]] , genes = current.genes$ENSEMBL)
-  current.genes = merge(current.genes , de_stat)
-  return(current.genes)
-} , BPPARAM = mcparam)
-
-
-
-
-
-```
 
 # Get milo DE stat
 
@@ -142,28 +107,33 @@ get_de_selected_genes = function(sce_milo , genes){
 }
 
 
+
 stat = bplapply(1:length(sims) , function(j){
   sim = sims[[j]]
   current.genes = simulated_genes[[j]]
-  stat_per_sim = lapply(1:nrow(anno) , function(i){
-    set.seed(anno$seed[i])
-    out = miloDE::assign_neighbourhoods(sim , reducedDim_name = "pca.simulations" , order = anno$order[i] , k = anno$k[i] , d = 10 , verbose = F , filtering = T)
-    out = get_de_selected_genes(out , genes = current.genes$ENSEMBL)
-    colnames(out)[colnames(out) == "gene"] = "ENSEMBL"
-    out = merge(out , current.genes , all.x = T)
+  if (nrow(current.genes) > 1){
+    stat_per_sim = lapply(1:nrow(anno) , function(i){
+      set.seed(anno$seed[i])
+      out = miloDE::assign_neighbourhoods(sim , reducedDim_name = "pca.simulations" , order = anno$order[i] , k = anno$k[i] , d = 5 , verbose = F , filtering = T)
+      out = get_de_selected_genes(out , genes = current.genes$ENSEMBL)
+      colnames(out)[colnames(out) == "gene"] = "ENSEMBL"
+      out = merge(out , current.genes , all.x = T)
+      out = cbind(out , anno[i , ])
+      return(out)
+    })
+    stat_per_sim = do.call(rbind , stat_per_sim)
     
-    out = cbind(out , anno[i , ])
-    return(out)
-  })
-  stat_per_sim = do.call(rbind , stat_per_sim)
-  
-  id = names(sims)[j]
-  stat_per_sim$id_sim = id
-  id = stringr::str_split(id , "_")
-  id = id[[1]]
-  stat_per_sim$round_sim = as.numeric(id[1])
-  stat_per_sim$n_markers = as.numeric(id[2])
-  
+    id = names(sims)[j]
+    stat_per_sim$id_sim = id
+    id = stringr::str_split(id , "_")
+    id = id[[1]]
+    stat_per_sim$round_sim = as.numeric(id[1])
+    stat_per_sim$n_markers = as.numeric(id[4])
+    stat_per_sim$n_not_markers = as.numeric(id[9])
+  }
+  else {
+    stat_per_sim = NULL
+  }
   return(stat_per_sim)
 } , BPPARAM = mcparam)
 stat = do.call(rbind , stat)

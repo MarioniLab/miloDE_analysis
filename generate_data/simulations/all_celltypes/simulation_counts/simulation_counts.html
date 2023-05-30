@@ -10,7 +10,7 @@
 
 
 
-<meta name="date" content="2023-05-12" />
+<meta name="date" content="2023-05-16" />
 
 <title>Select genes and simulate counts to immitate ground truth DE.</title>
 
@@ -783,7 +783,7 @@ function toggle_visibility(id1) {
 
 
 <h1 class="title toc-ignore">Select genes and simulate counts to immitate ground truth DE.</h1>
-<h4 class="date">12 May 2023</h4>
+<h4 class="date">16 May 2023</h4>
 
 </div>
 
@@ -931,7 +931,36 @@ saveRDS(genes_2_simulate , file = paste0(root.dir , &quot;data/processed/simulat
 </div>
 <div id="add-simulated-counts" class="section level1" number="5">
 <h1><span class="header-section-number">5</span> Add simulated counts</h1>
-<pre class="r"><code>add_simulated_counts &lt;- function(sce, celltypes = celltypes, gene, frac_cells_change, range){
+<pre class="r"><code>hvgs = scran::getTopHVGs(sce[, sce$type == &quot;wt&quot;] , n = 5000)
+
+add_batch_corrected_pca = function(sce, genes , reduced.dim_name = &quot;pca.corrected&quot; , batch = &quot;sample&quot; , d = 10, bpparam = NULL , correct = T){
+  require(batchelor)
+  set.seed(32)
+  meta = as.data.frame(colData(sce))
+  batchFactor = factor(meta[, colnames(meta) == batch])
+  if (is.null(bpparam)){
+    set.seed(32)
+    mbpca = multiBatchPCA(sce[genes , ], batch = batchFactor, d = d)
+  }
+  else {
+    set.seed(32)
+    mbpca = multiBatchPCA(sce[genes , ], batch = batchFactor, d = d , BPPARAM = bpparam)
+  }
+  if (correct){
+    out = do.call(reducedMNN, mbpca)
+    joint.pca = out$corrected
+  }
+  else {
+    joint.pca = do.call(rbind , mbpca)
+  }
+  joint.pca = joint.pca[order(rownames(joint.pca)) , ]
+  sce = sce[, order(colnames(sce))]
+  reducedDim(sce , reduced.dim_name) = joint.pca
+  return(sce)
+}
+
+
+add_simulated_counts &lt;- function(sce, celltypes = celltypes, gene, frac_cells_change, range){
   counts = counts(sce)
   current.counts = counts[gene, ]
   idx_2_change = which(sce$type == &quot;chimera&quot; &amp; sce$celltype %in% celltypes)
@@ -954,6 +983,9 @@ sces = bplapply(celltypes , function(celltype){
   
   }
   sce_simulated = scuttle::logNormCounts(sce_simulated)
+  # add new embedding
+  sce_simulated = add_batch_corrected_pca(sce_simulated , hvgs , reduced.dim_name = &quot;pca.simulations&quot; , d = 30)
+  
   return(sce_simulated)
 } , BPPARAM = mcparam)
 saveRDS(sces , file = paste0(root.dir , &quot;data/processed/simulations/all_celltypes/sces_simulated.Rds&quot;))</code></pre>

@@ -15,7 +15,7 @@ library(BiocParallel)
 library(geneBasisR)
 library(splatter)
 library(scran)
-ncores = 15
+ncores = 35
 mcparam = MulticoreParam(workers = ncores)
 register(mcparam)
 set.seed(32)
@@ -34,7 +34,7 @@ source(paste0(root.dir , "miloDE_analysis/core_functions.R"))
 sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/WT/mouse_embryo_E8.5.Rds"))
 sce = sce[, sce$sample == 17]
 sce = logNormCounts(sce)
-sce = retain_informative_genes(sce , n = 2000)
+sce = retain_informative_genes(sce , n = 1000)
 counts(sce) = as.matrix(counts(sce))
 
 params = splatEstimate( sce )
@@ -47,102 +47,253 @@ params = splatEstimate( sce )
 ```{r assign-anno-grid, message = FALSE}
 
 
-n_cells_total = c(8000)
-n_batches = c(2)
-group_prob = c(0.5)
-de_prob = c(0, 0.0025 , 0.01 , 0.05 , 0.1 , 0.5)
-de_facLoc = c(0.75 , 1.5 , 3 , 6)
-batch = c(FALSE)
-round = c(1:3)
 
-anno = expand.grid(n_cells_total = n_cells_total , n_batches = n_batches,  group_prob = group_prob , de_prob = de_prob, de_facLoc = de_facLoc , batch = batch , round = round)
-anno = unique(anno)
-anno$id = paste0(anno$batch , "_" , anno$de_prob , "_" , anno$de_facLoc , "_" , anno$round)
+sim = splatSimulateGroups(params, group.prob = c(0.5,0.5), de.prob = c(0,0.1) , batchCells = rep(2000,4), verbose = FALSE,  out.prob = 0 , batch.rmEffect = T , de.downProb = 0 )
+
+colnames(colData(sim))[colnames(colData(sim)) == "Batch"] = "sample"
+sim$type = sapply(1:ncol(sim) , function(i) ifelse(sim$sample[i] %in% c("Batch1" , "Batch2") , "cond_A", "cond_B"))
+#
+sim = SingleCellExperiment(list(counts = as(counts(sim),"dgCMatrix")) , 
+                           rowData = rowData(sim) , colData = colData(sim) )
+sim = scuttle::logNormCounts(sim)
+
+# select genes
+rowdata = as.data.frame(rowData(sim))
+rowdata$avg_group_1 = rowMeans(counts(sim[,sim$Group == "Group1"]))
+rowdata$avg_group_2 = rowMeans(counts(sim[,sim$Group == "Group2"]))
+rowdata$diff = rowdata$avg_group_2 - rowdata$avg_group_1
+
+rowdata$gene_change = !rowdata$DEFacGroup2 == 1
+
+p = ggplot(rowdata , aes(x = factor(gene_change) , y = diff)) + 
+  geom_boxplot()
+p
+
+
+# only keep the ones with difference higher than 1
+genes_to_keep = rowdata$Gene[rowdata$DEFacGroup2 == 1 | rowdata$diff > 0.5]
+sim = sim[genes_to_keep , ]
+
+# re-do rowdata
+rowdata = as.data.frame(rowData(sim))
+rowdata = rowdata[, c("Gene" , "BaseGeneMean" , "DEFacGroup2")]
+rowdata$avg_group_1 = rowMeans(counts(sim[,sim$Group == "Group1"]))
+rowdata$avg_group_2 = rowMeans(counts(sim[,sim$Group == "Group2"]))
+rowdata$diff = rowdata$avg_group_2 - rowdata$avg_group_1
+
+
+genes_hvg = rowdata$Gene[!rowdata$DEFacGroup2 == 1]
+genes_not_hvg = rowdata$Gene[rowdata$DEFacGroup2 == 1]
 
 
 ```
 
+
+## Check UMAPs
+
+```{r assign-anno-grid, message = FALSE}
+
+
+genes_hvg = rowdata$Gene[!rowdata$DEFacGroup2 == 1]
+genes_not_hvg = rowdata$Gene[rowdata$DEFacGroup2 == 1]
+
+sim = add_batch_corrected_pca(sim, genes = genes_hvg, reduced.dim_name = "pca.hvgs" , batch = "sample" , d = 10)
+sim = add_batch_corrected_pca(sim, genes = rowdata$Gene, reduced.dim_name = "pca.all" , batch = "sample" , d = 10)
+umaps = as.data.frame( scater::calculateUMAP(t(reducedDim(sim , "pca.hvgs"))) )
+reducedDim(sim , paste0("umap_" , "pca.hvgs")) = umaps
+umaps = as.data.frame( scater::calculateUMAP(t(reducedDim(sim , "pca.all"))) )
+reducedDim(sim , paste0("umap_" , "pca.all")) = umaps
+
+
+get_plot = function(red_dim){
+  umaps = cbind(as.data.frame(colData(sim)) , as.data.frame(reducedDim(sim , red_dim)))
+  p = ggplot(umaps , aes(x = V1 , y = V2 , col = Group)) +
+    geom_point() +
+    theme_bw() + 
+    ggtitle(red_dim)
+  return(p)
+}
+
+p = get_plot("umap_pca.all")
+p
+p = get_plot("umap_pca.hvgs")
+p
+
+```
+
+## Check the difference in expression
+
+```{r assign-anno-grid, message = FALSE}
+
+
+rowdata$gene_change = !rowdata$DEFacGroup2 == 1
+
+p = ggplot(rowdata , aes(x = factor(gene_change) , y = diff)) + 
+  geom_boxplot()
+p
+
+
+genes_2_simulate = lapply(rowdata$Gene[!rowdata$DEFacGroup2 == 1] , function(gene){
+  out = data.frame(Gene = gene)
+  out = merge(out , rowdata , all.x = T , all.y = F)
+  out$range = floor(out$avg_group_1 * (out$DEFacGroup2 - 1))
+  return(out)
+})
+genes_2_simulate = do.call(rbind , genes_2_simulate)
+
+
+
+sce_simulated = sim
+for (i in 1:nrow(genes_2_simulate)){
+  print(i)
+  sce_simulated = add_simulated_counts(sce_simulated, 
+                             gene = genes_2_simulate$Gene[i], 
+                             range = genes_2_simulate$range[i] )
+}
+sce_simulated = scuttle::logNormCounts(sce_simulated)
+# add re-computed embedding
+sce_simulated = add_batch_corrected_pca(sce_simulated, genes = genes_hvg, reduced.dim_name = "pca.hvgs" , batch = "sample" , d = 10 , correct = F)
+sce_simulated = add_batch_corrected_pca(sce_simulated, genes = rowdata$Gene, reduced.dim_name = "pca.all" , batch = "sample" , d = 10 , correct = F)
+umaps = as.data.frame( scater::calculateUMAP(t(reducedDim(sce_simulated , "pca.hvgs"))) )
+reducedDim(sce_simulated , paste0("umap_" , "pca.hvgs")) = umaps
+umaps = as.data.frame( scater::calculateUMAP(t(reducedDim(sce_simulated , "pca.all"))) )
+reducedDim(sce_simulated , paste0("umap_" , "pca.all")) = umaps
+
+
+get_plot = function(sim , red_dim){
+  umaps = cbind(as.data.frame(colData(sim)) , as.data.frame(reducedDim(sim , red_dim)))
+  p = ggplot(umaps , aes(x = V1 , y = V2 , col = Group)) +
+    geom_point() +
+    theme_bw() + 
+    facet_wrap(~type + Group) +
+    ggtitle(red_dim)
+  return(p)
+}
+
+p = get_plot(sce_simulated , "umap_pca.all")
+p
+p = get_plot(sce_simulated , "umap_pca.hvgs")
+p
+
+
+
+
+
+
+```
+
+
 # Generate datsets
 
-```{r gen-splatter-ds, message = FALSE}
+We will run a grid:
+
+- how many not DE genes we change
+
+- how many DE genes we change
+
+## Select genes
+
+```{r genes, message = FALSE}
+
+
+n_genes.grid = sapply(c(0 , 0.025 , 0.05 , 0.1 , 0.15 , 0.2 , 0.25 , 0.3 , 0.4 , 0.5 , 0.75 , 1) , function(i) return(round(length(genes_hvg) * i)))
+
+anno = expand.grid(round = c(1:3) , n_markers = n_genes.grid , n_not_markers = n_genes.grid)
+anno$id = paste0(anno$round , "_n_markers_" , anno$n_markers , "__n_not_markers_" , anno$n_not_markers)
+
+genes_2_simulate = lapply(1:nrow(anno) , function(i){
+  out = data.frame(Gene = c(sample(rowdata$Gene[!rowdata$DEFacGroup2 == 1] , anno$n_markers[i]) , sample(rowdata$Gene[rowdata$DEFacGroup2 == 1] , anno$n_not_markers[i])))
+  out$gene_type = c(rep("marker" , anno$n_markers[i]) , rep("not_marker" , anno$n_not_markers[i]))
+  out = merge(out , rowdata , all.x = T , all.y = F)
+  out$range = ceiling(out$avg_group_1 * (out$DEFacGroup2 - 1))
+  out$range[out$gene_type == "not_marker"] = ceiling(out$avg_group_1[out$gene_type == "not_marker"]/2)
+  return(out)
+})
+names(genes_2_simulate) = anno$id
 
 
 
-add_batch_corrected_pca = function(sce, genes , reduced.dim_name = "pca.corrected" , batch = "sample" , d = 30, bpparam = NULL , correct = T){
-  require(batchelor)
-  set.seed(32)
-  meta = as.data.frame(colData(sce))
-  batchFactor = factor(meta[, colnames(meta) == batch])
-  if (is.null(bpparam)){
-    set.seed(32)
-    mbpca = multiBatchPCA(sce[genes , ], batch = batchFactor, d = d)
-  }
-  else {
-    set.seed(32)
-    mbpca = multiBatchPCA(sce[genes , ], batch = batchFactor, d = d , BPPARAM = bpparam)
-  }
-  if (correct){
-    out = do.call(reducedMNN, mbpca)
-    joint.pca = out$corrected
-  }
-  else {
-    joint.pca = do.call(rbind , mbpca)
-  }
-  joint.pca = joint.pca[order(rownames(joint.pca)) , ]
-  sce = sce[, order(colnames(sce))]
-  reducedDim(sce , reduced.dim_name) = joint.pca
+
+
+```
+
+## Add simulated counts
+
+```{r add-sim-counts, message = FALSE}
+
+
+
+add_simulated_counts <- function(sce, gene, range){
+  counts = counts(sce)
+  current.counts = counts[gene, ]
+  idx_2_change = which(sce$type == "cond_B" & sce$Group == "Group1")
+  current.counts[idx_2_change] = current.counts[idx_2_change] + floor(runif(length(idx_2_change), min=max(range-1,0), max=range+1))
+  counts[gene, ] = current.counts
+  counts(sce) = counts
   return(sce)
 }
 
 
-sims = bplapply(1:nrow(anno) , function(i){
-  print(i)
-  n_cells_total = anno$n_cells_total[i]
-  n_batches = anno$n_batches[i]
-  group_prob = c(anno$group_prob[i] , 1 - anno$group_prob[i])
-  de_prob = anno$de_prob[i]
-  de_facLoc = anno$de_facLoc[i]
-  batch = anno$batch[i]
-  round = anno$round[i]
-  n_cells_per_batch = rep(round(n_cells_total/n_batches) , 1 , n_batches)
+
+sces = bplapply(genes_2_simulate , function(current.genes_2_simulate){
+  sce_simulated = sim
+  if (nrow(current.genes_2_simulate) > 1){
+    for (i in 1:nrow(current.genes_2_simulate)){
+      sce_simulated = add_simulated_counts(sce_simulated, 
+                               gene = current.genes_2_simulate$Gene[i], 
+                               range = current.genes_2_simulate$range[i] )
     
-  sim = splatSimulateGroups(params, group.prob = group_prob, de.prob = c(0,de_prob) , de.facLoc = de_facLoc , batchCells = n_cells_per_batch, verbose = FALSE,  out.prob = 0 , batch.rmEffect = !batch , de.downProb = 0)
-  sim$sample = paste0(sim$Batch , "_" , sim$Group)
-  
-  # discard unnecessary fields
-  sim = SingleCellExperiment(list(counts = counts(sim)), 
-                           colData = colData(sim) , rowData = rowData(sim))
-  # add logcounts
-  sim = scuttle::logNormCounts(sim)
-  rowdata = as.data.frame(rowData(sim))	  
-  # add MNN embedding (w and wo DE genes)
-  sim = add_batch_corrected_pca(sim , genes = rowdata$Gene , reduced.dim_name = "pca.all" , d = 5)
-  sim = add_batch_corrected_pca(sim , genes = rowdata$Gene[rowdata$DEFacGroup2 == 1] , reduced.dim_name = "pca.not_de" , d = 5)
-  
-  # add coldata
-  sim$batch_effect = batch
-  sim$n_batches = n_batches
-  sim$de_prob = de_prob
-  sim$de_facLoc = de_facLoc
-  sim$round = round
-  
-  # delete logcounts
-  sim_reduced = SingleCellExperiment(list(counts = as(counts(sim) , "dgCMatrix")) , 
-                                     colData = colData(sim) , rowData = rowData(sim))
-  colnames(sim_reduced) = colnames(sim)
-  rownames(sim_reduced) = rownames(sim)
-  
-  reducedDim(sim_reduced , "pca.all") = reducedDim(sim , "pca.all")
-  reducedDim(sim_reduced , "pca.not_de") = reducedDim(sim , "pca.not_de")
-  
-  return(sim_reduced)
-} , BPPARAM = mcparam)
-names(sims) = anno$id
-saveRDS(sims , file = paste0(root.dir , "data/processed/da_de/simulations_splatter/sims.Rds"))
+    }
+  }
+  sce_simulated = scuttle::logNormCounts(sce_simulated)
+  # add re-computed embedding
+  sce_simulated = add_batch_corrected_pca(sce_simulated, genes = genes_hvg, reduced.dim_name = "pca.hvgs" , batch = "sample" , d = 10)
+  sce_simulated = add_batch_corrected_pca(sce_simulated, genes = rowdata$Gene, reduced.dim_name = "pca.all" , batch = "sample" , d = 10)
+  return(sce_simulated)
+}, BPPARAM = mcparam)
+names(sces) = anno$id
+saveRDS(sces , file = paste0(root.dir , "data/processed/da_de/simulations_splatter/sims.Rds"))
 
 
 ```
 
+## Add lfc info for genes
+
+```{r add-lfc-stat, message = FALSE}
+
+
+
+get_de_stat = function(sce , genes){
+  require(tibble)
+  require(edgeR)
+  current.sce = sce[, sce$Group == "Group1"]
+  summed = summarizeAssayByGroup(counts(current.sce), colData(current.sce)[,c("sample","type")])
+  y <- DGEList(assay(summed, "sum"), samples=colData(summed), lib.size = colSums(assay(summed , "sum")))
+  y <- calcNormFactors(y)
+  design <- model.matrix(~ factor(type), y$samples)
+  y <- estimateDisp(y, design)
+  fit <- glmQLFit(y, design, robust=TRUE)
+  res <- glmQLFTest(fit, coef=ncol(design))
+  out = topTags(res, n = Inf )
+  out = as.data.frame(out)
+  out = rownames_to_column(out , var = "Gene")
+  out = out[out$Gene %in% genes , c("Gene" , "logFC" , "PValue" , "FDR")]
+  colnames(out) = c("Gene" , "logFC_bulk" , "PValue_bulk" , "FDR_bulk")
+  return(out)
+}
+
+genes_2_simulate = bplapply(1:length(genes_2_simulate) , function(i){
+  current.genes = genes_2_simulate[[i]]
+  de_stat = get_de_stat(sces[[i]] , genes = current.genes$Gene)
+  current.genes = merge(current.genes , de_stat)
+  return(current.genes)
+} , BPPARAM = mcparam)
+names(genes_2_simulate) = anno$id
+saveRDS(genes_2_simulate , file = paste0(root.dir , "data/processed/da_de/simulations_splatter/simulated_genes.Rds"))
+
+
+
+```
 
 # Session Info
 

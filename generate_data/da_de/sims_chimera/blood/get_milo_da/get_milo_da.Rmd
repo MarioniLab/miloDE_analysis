@@ -32,9 +32,10 @@ source(paste0(root.dir , "miloDE_analysis/core_functions.R"))
 
 sims = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_chimera/blood/sces_simulated.Rds"))
 
-anno_1 = expand.grid(order = 1 , k = c(75,150) , seed = c(13,17,32))
-anno_2 = expand.grid(order = 2 , k = c(10,15) , seed = c(13,17,32))
+anno_1 = expand.grid(order = 1 , k = c(100,200) , seed = c(13,17,32))
+anno_2 = expand.grid(order = 2 , k = c(15,25) , seed = c(13,17,32))
 anno = rbind(anno_1 , anno_2)
+anno$id_nhood_assignment = paste0(anno$order , "_" , anno$k , "_" , anno$seed)
 
 ```
 
@@ -70,7 +71,7 @@ stat = bplapply(1:length(sims) , function(j){
   stat_per_sim = lapply(1:nrow(anno) , function(i){
     
     set.seed(anno$seed[i])
-    out = miloDE::assign_neighbourhoods(sim , reducedDim_name = "pca.simulations" , order = anno$order[i] , k = anno$k[i] , d = 10 , verbose = F , filtering = T)
+    out = miloDE::assign_neighbourhoods(sim , reducedDim_name = "pca.simulations" , order = anno$order[i] , k = anno$k[i] , d = 5 , verbose = F , filtering = T)
     out = get_milo_stat(out , "pca.simulations")
     out = cbind(out , anno[i , ])
     
@@ -82,8 +83,9 @@ stat = bplapply(1:length(sims) , function(j){
   stat_per_sim$id_sim = id
   id = stringr::str_split(id , "_")
   id = id[[1]]
-  stat_per_sim$n_markers = as.numeric(id[2])
   stat_per_sim$round_sim = as.numeric(id[1])
+  stat_per_sim$n_markers = as.numeric(id[4])
+  stat_per_sim$n_not_markers = as.numeric(id[9])
   return(stat_per_sim)
 } , BPPARAM = mcparam)
 stat = do.call(rbind , stat)

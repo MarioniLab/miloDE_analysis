@@ -42,10 +42,14 @@ set.seed(32)
 
 root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
 
-simulated_genes = readRDS(file = paste0(root.dir , "data/processed/simulations/brain/simulated_genes.Rds"))
-sces = readRDS(paste0(root.dir , "data/processed/simulations/brain/sces_simulated.Rds"))
+simulated_genes = readRDS(file = paste0(root.dir , "data/processed/simulations/all_celltypes/simulated_genes.Rds"))
+sces = readRDS(paste0(root.dir , "data/processed/simulations/all_celltypes/sces_simulated.Rds"))
 
-cluster_splits = list(c(8) , c(3) , c(5) ,c(1,7) ,  c(5,8) , c(3,6)  , c(3,2,6) , c(1,4,5,7) , c(1,4,5,7,2) , c(1,2,3,4,5,6,7))
+celltypes = list("PGC" , "Blood progenitors 1" , "Blood progenitors 2" , "Erythroid1" , "Endothelium" , "Cardiomyocytes" , "Gut" ,  "Allantois" , "Pharyngeal mesoderm" , "Paraxial mesoderm" , "Mesenchyme" ,  c("Somitic mesoderm" , "Intermediate mesoderm" , "NMP") , c("Gut" , "Surface ectoderm") ,  "Forebrain/Midbrain/Hindbrain" , "Erythroid3" , c("Forebrain/Midbrain/Hindbrain" , "Spinal cord") , c("Forebrain/Midbrain/Hindbrain" , "Spinal cord" , "NMP") ,
+                 c("Erythroid1" ,"Erythroid2" ,"Erythroid3") , c("Erythroid1" ,"Erythroid2" ,"Erythroid3" , "Blood progenitors 1" , "Blood progenitors 2" ) ,
+                 c("Forebrain/Midbrain/Hindbrain" , "Spinal cord" , "NMP" , "Somitic mesoderm" , "Intermediate mesoderm") )
+
+
 
 ```
 
@@ -55,10 +59,10 @@ cluster_splits = list(c(8) , c(3) , c(5) ,c(1,7) ,  c(5,8) , c(3,6)  , c(3,2,6) 
 
 
 
-get_bulk_de = function(sce , clusters = "all" , genes){
+get_bulk_de = function(sce , option = "all" , celltypes = "all" , genes){
   require(tibble)
-  if (class(clusters) == "numeric"){
-    sce = sce[, sce$cluster %in% clusters]
+  if (option == "some_celltypes"){
+    sce = sce[, sce$celltype %in% celltypes]
   }
   summed = summarizeAssayByGroup(counts(sce), colData(sce)[,c("sample","type")])
   y <- DGEList(assay(summed, "sum"), samples=colData(summed), lib.size = colSums(assay(summed , "sum")))
@@ -84,19 +88,19 @@ get_bulk_de = function(sce , clusters = "all" , genes){
 
 
 
-stat = lapply(1:length(sces) , function(i){
+stat = bplapply(1:length(sces) , function(i){
   print(i)
   sce = sces[[i]]
   out_all = get_bulk_de(sce , genes = simulated_genes$ENSEMBL)
   out_all = out_all[, c("ENSEMBL" , "logFC" , "PValue" , "FDR")]
   colnames(out_all) = c("ENSEMBL" , "logFC_bulk_all" , "PValue_bulk_all" , "FDR_bulk_all")
-  out_clusters = get_bulk_de(sce , clusters = cluster_splits[[i]] , genes = simulated_genes$ENSEMBL)
+  out_clusters = get_bulk_de(sce , option = "some_celltypes" , celltypes = celltypes[[i]] , genes = simulated_genes$ENSEMBL)
   out_clusters = out_clusters[, c("ENSEMBL" , "logFC" , "PValue" , "FDR")]
-  colnames(out_clusters) = c("ENSEMBL" , "logFC_bulk_clusters" , "PValue_bulk_clusters" , "FDR_bulk_clusters")
+  colnames(out_clusters) = c("ENSEMBL" , "logFC_bulk_celltypes" , "PValue_bulk_celltypes" , "FDR_bulk_celltypes")
   out = merge(out_all , out_clusters)
   return(out)
-})
-saveRDS(stat , file = paste0(root.dir , "data/processed/simulations/brain/bulk_de_stat.Rds"))
+} , BPPARAM = mcparam)
+saveRDS(stat , file = paste0(root.dir , "data/processed/simulations/all_celltypes/bulk_de_stat.Rds"))
 
 
 
