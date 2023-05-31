@@ -48,7 +48,7 @@ sce = sce[, order(colnames(sce))]
 reducedDim(sce_original , "UMAP_scVI") = reducedDim(sce , "UMAP_scVI")
 
 sub_ct = "Floor plate"
-
+ct = "Forebrain/Midbrain/Hindbrain"
 
 # get sce-milo
 sce_milo = readRDS(paste0(root.dir , "data/processed/simulations/sce_milo_w_simulations.Rds"))
@@ -60,6 +60,8 @@ de_stat = readRDS(paste0(root.dir , "data/processed/simulations/milo_de_w_simula
 ```
 
 # UMAP, coloured by CT of interest
+
+## Only Floor plate
 
 ```{r cartoon-ct-colored, message = FALSE}
 
@@ -82,9 +84,33 @@ ggsave(filename = paste0(figures.dir, "cartoon_sims/umap_w_CT", ".png"), plot = 
 
 
 
-
 ```
 
+## Floor plate w/ brain cells contoured
+
+```{r cartoon-ct-colored, message = FALSE}
+
+
+cols = met.brewer("Isfahan1" , n = 8)[c(8,5,4)]
+umaps = cbind(as.data.frame(colData(sce)) , as.data.frame(reducedDim(sce , "UMAP_scVI")))
+umaps$sub_celltype[!umaps$sub_celltype == sub_ct] = "Rest"
+umaps$sub_celltype[umaps$celltype == ct & !umaps$sub_celltype == sub_ct] = ct
+umaps$sub_celltype = factor(umaps$sub_celltype , levels = c(sub_ct , ct , "Rest"))
+umaps = umaps[order(umaps$sub_celltype , decreasing = T) , ]
+
+p = ggplot(umaps , aes(x = V1 , y = V2 , col = sub_celltype)) +
+  geom_point(size = .5) + 
+  scale_color_manual(values = cols) +
+  theme_bw() +
+  theme(legend.position = "none") + 
+  labs(x = "" , y = "") +
+  theme(axis.text=element_text(size=14))
+p
+ggsave(filename = paste0(figures.dir, "cartoon_sims/umap_w_CT_extended", ".png"), plot = p, width = 3.5, height = 3.5)
+
+
+
+```
 
 ## Assign nhoods and colour by frac-CT
 

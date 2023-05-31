@@ -90,9 +90,9 @@ plots = lapply(1:nrow(anno), function(i){
   p = get_umap_plot(sce , reducedDim.name)
   return(p)
 })
-p = ggarrange(plotlist = plots , common.legend = F , ncol = nrow(anno) , nrow = 1)
+p = ggarrange(plotlist = plots , common.legend = F , ncol = 4 , nrow = 4)
 p
-ggsave(filename = paste0(figures.dir, "umaps_by_ct", ".png"), plot = p, width = 19, height = 5)
+ggsave(filename = paste0(figures.dir, "umaps_by_ct", ".png"), plot = p, width = 10, height = 15)
 
 
 
@@ -106,54 +106,73 @@ ggsave(filename = paste0(figures.dir, "umaps_by_ct", ".png"), plot = p, width = 
 
 
 
-get_de_genes_bulk = function(sce , celltype){
+get_de_genes_bulk = function(sce , celltype = NULL){
   require(tibble)
   require(edgeR)
-  sce = sce[ , sce$celltype == celltype]
-  summed = summarizeAssayByGroup(counts(sce), colData(sce)[,c("sample","type")])
-  y <- DGEList(assay(summed, "sum"), samples=colData(summed), lib.size = colSums(assay(summed , "sum")))
-  keep <- filterByExpr(y, group=summed$sample , min.count = 2 , min.total.count = 4)
-  y <- y[keep,]
-  y <- calcNormFactors(y)
-  design <- model.matrix(~ factor(type), y$samples)
-  y <- estimateDisp(y, design)
-  fit <- glmQLFit(y, design, robust=TRUE)
-  res <- glmQLFTest(fit, coef=ncol(design))
-  out = topTags(res, n = Inf )
-  out = as.data.frame(out)
-  out = rownames_to_column(out , var = "ENSEMBL")
-  out = merge(out , rowdata , all.x = T , all.y = F)
-  return(out)
+  if (!is.null(celltype)){
+    sce = sce[ , sce$celltype == celltype]
+  }
+  
+  stat = tryCatch(
+    {
+      summed = summarizeAssayByGroup(counts(sce), colData(sce)[,c("sample","type")])
+      y <- DGEList(assay(summed, "sum"), samples=colData(summed), lib.size = colSums(assay(summed , "sum")))
+      keep <- filterByExpr(y, group=summed$sample , min.count = 2 , min.total.count = 4)
+      y <- y[keep,]
+      y <- calcNormFactors(y)
+      design <- model.matrix(~ factor(type), y$samples)
+      y <- estimateDisp(y, design)
+      fit <- glmQLFit(y, design, robust=TRUE)
+      res <- glmQLFTest(fit, coef=ncol(design))
+      out = topTags(res, n = Inf )
+      out = as.data.frame(out)
+      out = rownames_to_column(out , var = "ENSEMBL")
+      out = merge(out , rowdata , all.x = T , all.y = F)
+      if (!is.null(celltype)){
+        out$celltype = celltype
+      }
+      out
+    }, 
+    error = function(dummy){
+      return(NULL)
+    }
+  )
+  return(stat)
 }      
 
 
-celltypes = table(sce$celltype , sce$type)
-celltypes = sapply(1:nrow(celltypes) , function(i){
-  if (min(celltypes[i, ]) >= 50){
-    return(rownames(celltypes)[i])
-  } else {
-    return(NULL)
-  }
-}) 
-celltypes = unlist(celltypes)  
 
-
-de_stat_bulk = lapply(celltypes , function(celltype){
+de_stat_bulk = lapply(unique(sce$celltype) , function(celltype){
   print(celltype)
   out = get_de_genes_bulk(sce , celltype)
-  out$celltype = celltype
   return(out)
 })
 de_stat_bulk = do.call(rbind , de_stat_bulk)
 
+# get celltype composition
+tab = as.data.frame(table(sce$celltype))
+colnames(tab) = c("celltype" , "n")
+tab$n = tab$n/sum(tab$n)
+
+de_stat_bulk = merge(de_stat_bulk , tab , all.x = T , all.y = F)
+# add normalised celltype composition
+de_stat_bulk$n_norm = de_stat_bulk$n
+de_stat_bulk$n_norm[de_stat_bulk$PValue >= 0.01] = 0
+   
 
 
-de_stat_per_gene = as.data.frame(de_stat_bulk %>% group_by(ENSEMBL , SYMBOL) %>% dplyr::summarise(median_pval = median(PValue , na.rm = T) , median_logFC = median(logFC , na.rm = T) , mean_logFC = mean(logFC , na.rm = T) , frac_cts_sig = mean(FDR < 0.05 , na.rm = T)))
+
+de_stat_per_gene = as.data.frame(de_stat_bulk %>% group_by(ENSEMBL , SYMBOL) %>% dplyr::summarise(median_pval = median(PValue , na.rm = T) , median_logFC = median(logFC , na.rm = T) , mean_logFC = mean(logFC , na.rm = T) , frac_cts_sig = mean(FDR < 0.05 , na.rm = T) , 
+                                                                                                  weight_cts_sig = sum(n_norm)))
 de_stat_per_gene = de_stat_per_gene[de_stat_per_gene$SYMBOL %in% as.character(chimera_speicific_stat$SYMBOL) , ]
 
 
-de_stat_per_gene = de_stat_per_gene[de_stat_per_gene$ENSEMBL %in% chimera_speicific_stat$ENSEMBL , ]
+# add DE using all
+de_stat_all = get_de_genes_bulk(sce)
+de_stat_all = de_stat_all[de_stat_all$ENSEMBL %in% chimera_speicific_stat$ENSEMBL , c("ENSEMBL" , "logFC")]
+colnames(de_stat_all) = c("ENSEMBL" , "logFC_all")
 
+de_stat_per_gene = merge(de_stat_per_gene , de_stat_all)
 
 
 ```
@@ -254,7 +273,7 @@ saveRDS(stat , paste0(root.dir , "data/temp/embedding_homogeneity_stat.Rds"))
 ```{r plot-sd-boxplot, message = FALSE}
 
 
-
+stat = readRDS(paste0(root.dir , "data/temp/embedding_homogeneity_stat.Rds"))
 current.stat = stat[stat$reduced_dim %in% anno$reducedDim.name,]
 current.stat$reduced_dim = factor(current.stat$reduced_dim , levels = anno$reducedDim.name)
 current.stat$reduced_dim_type_genes = paste0(current.stat$reduced_dim_type , "_" , current.stat$reduced_dim_genes)
@@ -292,6 +311,7 @@ ggsave(filename = paste0(figures.dir, "sd_distr", ".png"), plot = p, width = 12,
 ```{r boxplot-distr-milo-de, message = FALSE}
 
 
+
 de_stat = readRDS( paste0(root.dir , "data/processed/embedding_analysis_updated/milo_de_chimera_genes.Rds") )
 rowdata = as.data.frame(rowData(sce))
 colnames(de_stat)[colnames(de_stat) == "gene"] = "ENSEMBL"
@@ -309,7 +329,7 @@ df = lapply(unique(de_stat$id) , function(id){
 df = do.call(rbind , df)
 
 de_stat = merge(de_stat , df , by= c("Nhood_center" , "id") , all.x = T)
-de_stat = merge(de_stat , de_stat_per_gene[, c("ENSEMBL" , "median_logFC" , "mean_logFC")] , all.x = T , all.y = F)
+de_stat = merge(de_stat , de_stat_per_gene[, c("ENSEMBL" , "median_logFC" , "mean_logFC" , "logFC_all")] , all.x = T , all.y = F)
 
 
 ```
@@ -380,7 +400,7 @@ p
 ```{r boxplot-distr-milo-de, message = FALSE}
 
 
-de_stat_combined = as.data.frame(de_stat %>% group_by(SYMBOL , id , reduced_dim_method , reduced_dim_type , reduced_dim_genes , reduced_dim , order , k , round) %>% dplyr::summarise(logFC = median(logFC , na.rm = T) , mean_logFC = mean(mean_logFC , na.rm = T), median_logFC = mean(median_logFC , na.rm = T),  frac_hoods_sig_01 = mean(pval < 0.1 , na.rm = T) , frac_hoods_sig_005 = mean(pval < 0.05 , na.rm = T) , frac_hoods_sig_001 = mean(pval < 0.01 , na.rm = T) , frac_hoods_sig_0001 = mean(pval < 0.005 , na.rm = T)  , frac_hoods_sig_0005 = mean(pval < 0.001 , na.rm = T) , frac_hoods_sig_00001 = mean(pval < 0.0001 , na.rm = T) ))
+de_stat_combined = as.data.frame(de_stat %>% group_by(SYMBOL , id , reduced_dim_method , reduced_dim_type , reduced_dim_genes , reduced_dim , order , k , round) %>% dplyr::summarise(logFC = median(logFC , na.rm = T) , mean_logFC = mean(mean_logFC , na.rm = T), median_logFC = mean(median_logFC , na.rm = T),  logFC_all = mean(logFC_all , na.rm = T), frac_hoods_sig_01 = mean(pval < 0.1 , na.rm = T) , frac_hoods_sig_005 = mean(pval < 0.05 , na.rm = T) , frac_hoods_sig_001 = mean(pval < 0.01 , na.rm = T) , frac_hoods_sig_0001 = mean(pval < 0.005 , na.rm = T)  , frac_hoods_sig_0005 = mean(pval < 0.001 , na.rm = T) , frac_hoods_sig_00001 = mean(pval < 0.0001 , na.rm = T) ))
 
 de_stat_combined = de_stat_combined[de_stat_combined$reduced_dim %in% anno$reducedDim.name , ]
 de_stat_combined$reduced_dim = factor(de_stat_combined$reduced_dim , levels = anno$reducedDim.name)
@@ -415,7 +435,7 @@ plots = lapply(unique(de_stat_combined$SYMBOL) , function(gene){
     ggtitle(gene) + 
     scale_fill_manual(values = cols , name = "Embedding") + 
     labs(x = "" , y = "") +
-    geom_hline(yintercept = abs(unique(de_stat_combined$mean_logFC[de_stat_combined$SYMBOL == gene])) , "color" = "black" , "linetype" = "dashed") 
+    geom_hline(yintercept = abs(unique(de_stat_combined$logFC_all[de_stat_combined$SYMBOL == gene])) , "color" = "black" , "linetype" = "dashed") 
   return(p)
 })
 p = ggarrange(plotlist = plots , common.legend = T , ncol = length(chimera_speicific_genes) , nrow = 1)

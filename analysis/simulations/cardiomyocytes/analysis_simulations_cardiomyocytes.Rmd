@@ -19,6 +19,7 @@ library(ggpubr)
 library(viridis)
 library(MetBrewer)
 library(BiocParallel)
+library(slingshot)
 
 ncores = 5
 mcparam = MulticoreParam(workers = ncores)
@@ -27,17 +28,37 @@ register(mcparam)
 set.seed(32)
 
 root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
-figures.dir = paste0(root.dir , "figures/detection_analysis/chimera_embryo/brain/")
+figures.dir = paste0(root.dir , "figures/detection_analysis/chimera_embryo/cardiomyocytes/")
 
 
 # load data
-sce = readRDS(paste0(root.dir , "data/processed/simulations/brain/sce_w_clusters.Rds"))
-cluster_splits = list(c(8) , c(3) , c(5) ,c(1,7) ,  c(5,8) , c(3,6)  , c(3,2,6) , c(1,4,5,7) , c(1,4,5,7,2) , c(1,2,3,4,5,6,7))
-simulated_genes = readRDS(file = paste0(root.dir , "data/processed/simulations/brain/simulated_genes.Rds"))
-sces = readRDS(paste0(root.dir , "data/processed/simulations/brain/sces_simulated.Rds"))
+sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/mouse_embryo_wt_chimera.Rds"))
+sce = sce[, sce$celltype == "Cardiomyocytes"]
+set.seed(32)
+slingshot_res <- slingPseudotime(slingshot(as.matrix(reducedDim(sce , "mnn_unsupervised_wt"))))
+sce$pt = as.numeric(slingshot_res)
+pt_grid = sapply(seq(0,1,0.01) , function(i) return(as.numeric(quantile(sce$pt , i))))
 
-milo_de_stat = readRDS(paste0(root.dir , "data/processed/simulations/brain/milo_de_stat__recalculated_embedding.Rds"))
-bulk_de_stat = readRDS(paste0(root.dir , "data/processed/simulations/brain/bulk_de_stat.Rds"))
+cluster_splits = list(c(pt_grid[1] , pt_grid[3]) , 
+                      c(pt_grid[49] , pt_grid[51]),
+                      c(pt_grid[99] , pt_grid[101]),
+                      c(pt_grid[1] , pt_grid[6]) , 
+                      c(pt_grid[47] , pt_grid[53]),
+                      c(pt_grid[95] , pt_grid[101]),
+                      c(pt_grid[1] , pt_grid[11]) , 
+                      c(pt_grid[45] , pt_grid[55]),
+                      c(pt_grid[91] , pt_grid[101]),
+                      c(pt_grid[1] , pt_grid[26]) , 
+                      c(pt_grid[37] , pt_grid[63]),
+                      c(pt_grid[75] , pt_grid[101])
+                      )
+
+simulated_genes = readRDS(file = paste0(root.dir , "data/processed/simulations/cardiomyocytes/simulated_genes.Rds"))
+sces = readRDS(paste0(root.dir , "data/processed/simulations/cardiomyocytes/sces_simulated.Rds"))
+
+milo_de_stat = readRDS(paste0(root.dir , "data/processed/simulations/cardiomyocytes/milo_de_stat__recalculated_embedding.Rds"))
+bulk_de_stat = readRDS(paste0(root.dir , "data/processed/simulations/cardiomyocytes/bulk_de_stat.Rds"))
+bulk_de_stat_w_pt = readRDS(paste0(root.dir , "data/processed/simulations/cardiomyocytes/bulk_de_stat_w_pt.Rds"))
 
 
 ```
@@ -48,7 +69,7 @@ bulk_de_stat = readRDS(paste0(root.dir , "data/processed/simulations/brain/bulk_
 
 
 cluster_splits_df = lapply(1:length(cluster_splits) , function(i){
-  out = round( mean(sce$cluster %in% cluster_splits[[i]]) , 2 )
+  out = round( mean(sce$pt >= cluster_splits[[i]][1] & sce$pt <= cluster_splits[[i]][2]) , 3 )
   out = data.frame(idx = i , prop = out)
   return(out)
 })
@@ -58,10 +79,17 @@ cluster_splits_df = do.call(rbind , cluster_splits_df)
 
 bulk_de_stat = lapply(1:length(bulk_de_stat) , function(i){
   current.stat = bulk_de_stat[[i]]
+  current.stat_w_pt = bulk_de_stat_w_pt[[i]]
+  current.stat = merge(current.stat , current.stat_w_pt)
+  
   current.stat$logFC_bulk_all = -1*(current.stat$logFC_bulk_all)
   current.stat$logFC_bulk_clusters = -1*(current.stat$logFC_bulk_clusters)
+  current.stat$logFC_bulk_all_w_pt = -1*(current.stat$logFC_w_pt)
+  
   current.stat$logFC_bulk_all_round = round(current.stat$logFC_bulk_all , 1)
   current.stat$logFC_bulk_clusters_round = round(current.stat$logFC_bulk_clusters , 1)
+  current.stat$logFC_bulk_all_w_pt_round = round(current.stat$logFC_bulk_all_w_pt)
+  
   current.stat = cbind(current.stat , cluster_splits_df[i,])
   return(current.stat)
 })
@@ -83,8 +111,8 @@ milo_de_stat = do.call(rbind , milo_de_stat)
 ```{r load-data, message = FALSE}
 
 
-umaps = as.data.frame( scater::calculateUMAP(t(reducedDim(sce , "scvi_supervised_wt"))) )
-reducedDim(sce , paste0("umap_" , "scvi_supervised_wt")) = umaps
+umaps = as.data.frame( scater::calculateUMAP(t(reducedDim(sce , "mnn_unsupervised_wt"))) )
+reducedDim(sce , paste0("umap_" , "mnn_unsupervised_wt")) = umaps
 
 cols = c("#899DA4" , "#C93312")
 names(cols) = c(F,T)
@@ -92,9 +120,9 @@ names(cols) = c(F,T)
 
 get_plot_per_cluster_split = function(idx){
   current.clusters = cluster_splits[[idx]]
-  sce$perturbed = sce$cluster %in% current.clusters
+  sce$perturbed = sce$pt >= current.clusters[1] & sce$pt <= current.clusters[2]
   
-  meta = cbind(as.data.frame(colData(sce)) , as.data.frame(reducedDim(sce , "umap_scvi_supervised_wt")))
+  meta = cbind(as.data.frame(colData(sce)) , as.data.frame(reducedDim(sce , "umap_mnn_unsupervised_wt")))
   meta = meta[order(meta$perturbed) , ]
   p = ggplot(meta , aes(x = V1 , y = V2 , col = perturbed)) + 
     geom_point(size = .5 , alpha = .9) +
@@ -104,13 +132,13 @@ get_plot_per_cluster_split = function(idx){
   return(p)
 }
 
-plots = lapply(c(1:10) , function(i){
+plots = lapply(c(1:length(sces)) , function(i){
   p = get_plot_per_cluster_split(i)
   return(p)
 })
-p = ggarrange(plotlist = plots , nrow = 2 , ncol = 5, common.legend = T)
+p = ggarrange(plotlist = plots , nrow = 3 , ncol = 4, common.legend = T)
 p
-ggsave(filename = paste0(figures.dir, "overview_perturbations", ".png"), plot = p, width = 8, height = 4)
+ggsave(filename = paste0(figures.dir, "overview_perturbations", ".png"), plot = p, width = 8, height = 5)
 
 
 ```
@@ -128,7 +156,7 @@ bulk_de_stat_combined = as.data.frame(bulk_de_stat %>% group_by(idx , prop , log
                                                          avg_logFC_all = mean(logFC_bulk_all_round)))
 
 
-p = ggplot(bulk_de_stat_combined[bulk_de_stat_combined$logFC_bulk_clusters < 4 & bulk_de_stat_combined$logFC_bulk_clusters > 0, ] , aes(x = factor(prop) , y = factor(logFC_bulk_clusters_round) , fill = frac_genes_sig)) + 
+p = ggplot(bulk_de_stat_combined[bulk_de_stat_combined$logFC_bulk_clusters < 6 & bulk_de_stat_combined$logFC_bulk_clusters > 0, ] , aes(x = factor(idx) , y = factor(logFC_bulk_clusters_round) , fill = frac_genes_sig)) + 
   geom_tile() + 
   scale_fill_viridis(discrete = F , name = "% genes\ndet. as DE") +
   theme_bw() + 
@@ -199,13 +227,14 @@ milo_de_stat_combined = as.data.frame(milo_de_stat_combined %>% group_by(idx , p
 
 
 plots = lapply(unique(milo_de_stat_combined$ct_purity.thresh) , function(ct_purity){
-  current.stat = milo_de_stat_combined[milo_de_stat_combined$logFC_bulk_clusters_round < 4 & milo_de_stat_combined$logFC_bulk_clusters_round > 0 & milo_de_stat_combined$ct_purity.thresh == ct_purity, ]
+  current.stat = milo_de_stat_combined[milo_de_stat_combined$logFC_bulk_clusters_round < 6 & milo_de_stat_combined$logFC_bulk_clusters_round > 0 & milo_de_stat_combined$ct_purity.thresh == ct_purity, ]
   
   p = ggplot(current.stat , aes(x = factor(prop) , y = factor(logFC_bulk_clusters_round) , fill = sensitivity)) + 
     geom_tile() + 
     scale_fill_viridis(discrete = F , name = "Sensitivity") +
     theme_bw() +
     labs(x = "Proportion of perturbed cells" , y = "logFC for perturbed cells")
+  p
   ggsave(filename = paste0(figures.dir, "milo_de/heatmaps_sensitivity/ct_purity_", ct_purity , ".png"), plot = p, width = 5, height = 5)
   
   p = ggplot(current.stat , aes(x = factor(prop) , y = factor(logFC_bulk_clusters_round) , fill = fdr)) + 
