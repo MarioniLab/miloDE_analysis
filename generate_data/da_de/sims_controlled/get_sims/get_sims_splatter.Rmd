@@ -15,7 +15,7 @@ library(BiocParallel)
 library(geneBasisR)
 library(splatter)
 library(scran)
-ncores = 35
+ncores = 28
 mcparam = MulticoreParam(workers = ncores)
 register(mcparam)
 set.seed(32)
@@ -59,8 +59,8 @@ sim = scuttle::logNormCounts(sim)
 
 # select genes
 rowdata = as.data.frame(rowData(sim))
-rowdata$avg_group_1 = rowMeans(counts(sim[,sim$Group == "Group1"]))
-rowdata$avg_group_2 = rowMeans(counts(sim[,sim$Group == "Group2"]))
+rowdata$avg_group_1 = rowMedians(as.matrix(counts(sim[,sim$Group == "Group1"])))
+rowdata$avg_group_2 = rowMedians(as.matrix(counts(sim[,sim$Group == "Group2"])))
 rowdata$diff = rowdata$avg_group_2 - rowdata$avg_group_1
 
 # only keep the ones with difference higher than 1
@@ -70,8 +70,8 @@ sim = sim[genes_to_keep , ]
 # re-do rowdata
 rowdata = as.data.frame(rowData(sim))
 rowdata = rowdata[, c("Gene" , "BaseGeneMean" , "DEFacGroup2")]
-rowdata$avg_group_1 = rowMeans(counts(sim[,sim$Group == "Group1"]))
-rowdata$avg_group_2 = rowMeans(counts(sim[,sim$Group == "Group2"]))
+rowdata$avg_group_1 = rowMedians(as.matrix(counts(sim[,sim$Group == "Group1"])))
+rowdata$avg_group_2 = rowMedians(as.matrix(counts(sim[,sim$Group == "Group2"])))
 rowdata$diff = rowdata$avg_group_2 - rowdata$avg_group_1
 
 

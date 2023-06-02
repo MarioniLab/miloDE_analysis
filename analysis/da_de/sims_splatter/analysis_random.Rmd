@@ -18,6 +18,7 @@ library(splatter)
 library(scran)
 library(miloR)
 library(miloDE)
+library(stringr)
 
 ncores = 5
 mcparam = MulticoreParam(workers = ncores)
@@ -26,16 +27,117 @@ set.seed(32)
 
 root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
 source(paste0(root.dir , "miloDE_analysis/core_functions.R"))
-figures.dir = paste0(root.dir , "figures/da_de/simulations_splatter/")
+figures.dir = paste0(root.dir , "figures/da_de/simulations_splatter/random/")
 
 # generated simulation data
-sces = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_splatter/sims.Rds"))
-simulated_genes = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_splatter/simulated_genes.Rds"))
-stat_da = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_splatter/stat_da.Rds"))
-stat_de = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_splatter/stat_de.Rds"))
+sces = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_random/sims.Rds"))
+simulated_genes = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_random/simulated_genes.Rds"))
+stat_da = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_random/stat_da.Rds"))
+#stat_de = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_random/stat_de.Rds"))
 
-stat_combined_genes_groupped = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_splatter/stat_combined_all_genes.Rds"))
-stat_combined_genes_split = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_splatter/stat_combined_split_by_logFC.Rds"))
+#stat_combined= readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_random/stat_combined_all_genes.Rds"))
+
+
+```
+
+# Calc DA stat - temp
+
+```{r load, message = FALSE}
+
+
+get_stat_per_sim_and_nhood_assignment = function(id_sim , id_nhood_assignment , reducedDim_name , spatialFDR_DA.thresh = 0.1 , spatialFDR_DE.thresh = 0.1){
+  current.stat_da = stat_da[stat_da$id_sim == id_sim & stat_da$id_nhood_assignment == id_nhood_assignment & stat_da$reducedDim_name == reducedDim_name, ]
+  out = as.data.frame(current.stat_da %>% group_by(id_sim , id_nhood_assignment , reducedDim_name) %>%
+                                    dplyr::summarise(frac_hoods_DA = mean(SpatialFDR <= spatialFDR_DA.thresh , na.rm = T)))
+
+  out$reducedDim_name = as.character(reducedDim_name)
+  out$id_sim = as.character(id_sim)
+  out$id_nhood_assignment = as.character(id_nhood_assignment)
+  return(out)
+}
+
+
+
+anno_sims = expand.grid(id_sim = unique(stat_da$id_sim), id_nhood_assignment = unique(stat_da$id_nhood_assignment) ,  reducedDim_name = unique(stat_da$reducedDim_name))
+
+stat = lapply(1:nrow(anno_sims) , function(i){
+  out = get_stat_per_sim_and_nhood_assignment(anno_sims$id_sim[i] , anno_sims$id_nhood_assignment[i] , anno_sims$reducedDim_name[i])
+  return(out)
+})
+stat = do.call(rbind , stat)
+stat = merge(stat , unique(stat_da[, c("id_sim" , "n_hvgs" , "n_not_hvgs", "round_sim" , "order" , "k" , "seed" , "id_nhood_assignment" , "reducedDim_name")]) , by = c("id_sim" , "id_nhood_assignment" , "reducedDim_name") , all.x = T , all.y = F)
+
+
+
+
+stat$reducedDim_name[stat$reducedDim_name == "pca.hvgs"] = "Case-specific variance excluded"
+stat$reducedDim_name[stat$reducedDim_name == "pca.all"] = "Case-specific variance included"
+
+p = ggplot(stat , aes(x = factor(n_hvgs) , y = factor(n_not_hvgs) , fill = frac_hoods_DA)) +
+  geom_tile() + 
+  facet_wrap(~reducedDim_name + round_sim) + 
+  scale_fill_viridis(discrete = F , name = "Fraction\nof DA nhoods") +
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+  labs(x = "# of altered genes contributing to joint variance" , y = "# of altered genes\ncontributing to case variance") 
+p
+ggsave(filename = paste0(figures.dir, "da_stat", ".png"), plot = p, width = 10, height = 6)
+
+
+```
+
+
+# UMAP on how pop is moving
+
+```{r load, message = FALSE}
+
+
+ids = sapply(names(sces) , function(str) str_detect(str, "__n_not_markers_0", negate = FALSE))
+ids = as.numeric( which(ids) )
+
+ids = c( c(1,4,7,10,13,16,19,22,25,28,31,34) , c(1,4,7,10,13,16,19,22,25,28,31,34) + 1 , c(1,4,7,10,13,16,19,22,25,28,31,34) + 2)
+
+
+cols = met.brewer("Egypt",4)
+cols = cols[c(3:4)]
+
+get_plot = function(id){
+  sce = sces[[id]]
+
+  umaps = as.data.frame( scater::calculateUMAP(t(reducedDim(sce , "pca.hvgs"))) )
+  reducedDim(sce , paste0("umap_" , "pca.hvgs")) = umaps
+  meta = cbind(as.data.frame(colData(sce)) , as.data.frame(reducedDim(sce , "umap_pca.hvgs")))
+  meta$Group = as.character(meta$Group)
+  meta$Group[meta$Group == "Group1"] = "Cell type 1"
+  meta$Group[meta$Group == "Group2"] = "Cell type 2"
+  meta$type[meta$type == "cond_A"] = "Condition A"
+  meta$type[meta$type == "cond_B"] = "Condition B"
+  
+  meta = meta[sample(nrow(meta)) , ]
+  title = names(sces)[id]
+  title = str_remove(title , "__n_not_markers_0")
+  p = ggplot(meta , aes(x = V1 , y = V2 , col = factor(Group))) + 
+    geom_point(alpha = .5 , size = .5) +
+    theme_bw() +
+    facet_wrap(~type, nrow = 2) + 
+    ggtitle(title) + 
+    labs(x = "UMAP-1" , y = "UMAP-2") + 
+    scale_color_manual(values = cols , name = "Cell type") + 
+    ggtitle(title)
+  p
+  return(p)
+}
+
+
+plots = lapply(ids , function(id){
+  print(id)
+  p = get_plot(id)
+  return(p)
+})
+p = ggarrange(plotlist = plots , nrow = 3 , ncol = 12 , common.legend = T)
+p
+ggsave(filename = paste0(figures.dir, "umap_movement", ".png"), plot = p, width = 25, height = 10)
+
 
 
 ```

@@ -21,7 +21,7 @@ library(miloDE)
 library(stringr)
 library(dplyr)
 
-ncores = 35
+ncores = 20
 mcparam = MulticoreParam(workers = ncores)
 register(mcparam)
 set.seed(32)
@@ -90,8 +90,8 @@ stat = bplapply(1:length(sims) , function(j){
   id = stringr::str_split(id , "_")
   id = id[[1]]
   stat_per_sim$round_sim = as.numeric(id[1])
-  stat_per_sim$n_hvgs = as.numeric(id[4])
-  stat_per_sim$n_not_hvgs = as.numeric(id[9])
+  stat_per_sim$n_markers = as.numeric(id[4])
+  stat_per_sim$n_not_markers = as.numeric(id[9])
   return(stat_per_sim)
 } , BPPARAM = mcparam)
 stat = do.call(rbind , stat)

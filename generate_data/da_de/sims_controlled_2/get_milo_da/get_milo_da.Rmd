@@ -30,7 +30,7 @@ root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
 source(paste0(root.dir , "miloDE_analysis/core_functions.R"))
 
 
-sims = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_controlled/sims.Rds"))
+sims = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_controlled_2/sims.Rds"))
 
 
 anno_1 = expand.grid(order = 1 , k = c(100,200) , seed = c(13,17,32))
@@ -90,12 +90,12 @@ stat = bplapply(1:length(sims) , function(j){
   id = stringr::str_split(id , "_")
   id = id[[1]]
   stat_per_sim$round_sim = as.numeric(id[1])
-  stat_per_sim$n_hvgs = as.numeric(id[4])
-  stat_per_sim$n_not_hvgs = as.numeric(id[9])
+  stat_per_sim$effect_size = as.numeric(id[3])
+  stat_per_sim$n_not_markers = as.numeric(id[8])
   return(stat_per_sim)
 } , BPPARAM = mcparam)
 stat = do.call(rbind , stat)
-saveRDS(stat , file = paste0(root.dir , "data/processed/da_de/simulations_controlled/stat_da.Rds"))
+saveRDS(stat , file = paste0(root.dir , "data/processed/da_de/simulations_controlled_2/stat_da.Rds"))
 
 
 

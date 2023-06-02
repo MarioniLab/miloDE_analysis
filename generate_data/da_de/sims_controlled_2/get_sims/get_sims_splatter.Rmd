@@ -15,7 +15,7 @@ library(BiocParallel)
 library(geneBasisR)
 library(splatter)
 library(scran)
-ncores = 35
+ncores = 42
 mcparam = MulticoreParam(workers = ncores)
 register(mcparam)
 set.seed(32)
@@ -61,18 +61,25 @@ sim = scuttle::logNormCounts(sim)
 rowdata = as.data.frame(rowData(sim))
 rowdata$avg_group_1 = rowMeans(counts(sim[,sim$Group == "Group1"]))
 rowdata$avg_group_2 = rowMeans(counts(sim[,sim$Group == "Group2"]))
-rowdata$diff = rowdata$avg_group_2 - rowdata$avg_group_1
+rowdata$avg_diff = rowdata$avg_group_2 - rowdata$avg_group_1
+
+rowdata$med_group_1 = rowMedians(as.matrix( counts(sim[,sim$Group == "Group1"])) )
+rowdata$med_group_2 = rowMedians(as.matrix( counts(sim[,sim$Group == "Group2"])) )
+rowdata$med_diff = rowdata$med_group_2 - rowdata$med_group_1
 
 # only keep the ones with difference higher than 1
-genes_to_keep = rowdata$Gene[rowdata$DEFacGroup2 == 1 | rowdata$diff > 0.5]
+genes_to_keep = rowdata$Gene[rowdata$DEFacGroup2 == 1 | rowdata$avg_diff > 0.5]
 sim = sim[genes_to_keep , ]
 
 # re-do rowdata
 rowdata = as.data.frame(rowData(sim))
-rowdata = rowdata[, c("Gene" , "BaseGeneMean" , "DEFacGroup2")]
 rowdata$avg_group_1 = rowMeans(counts(sim[,sim$Group == "Group1"]))
 rowdata$avg_group_2 = rowMeans(counts(sim[,sim$Group == "Group2"]))
-rowdata$diff = rowdata$avg_group_2 - rowdata$avg_group_1
+rowdata$avg_diff = rowdata$avg_group_2 - rowdata$avg_group_1
+
+rowdata$med_group_1 = rowMedians(as.matrix( counts(sim[,sim$Group == "Group1"])) )
+rowdata$med_group_2 = rowMedians(as.matrix( counts(sim[,sim$Group == "Group2"])) )
+rowdata$med_diff = rowdata$med_group_2 - rowdata$med_group_1
 
 
 genes_hvg = rowdata$Gene[!rowdata$DEFacGroup2 == 1]
@@ -88,17 +95,19 @@ genes_not_hvg = rowdata$Gene[rowdata$DEFacGroup2 == 1]
 ```{r genes, message = FALSE}
 
 
-n_genes.grid = sapply(c(0 , 0.05 , 0.1 , 0.15 , 0.2 , 0.25 , 0.3 , 0.4 , 0.5 , 0.75 , 1) , function(i) return(round(length(genes_hvg) * i)))
+#n_genes.grid = sapply(c(0 , 0.1 , 0.2 , 0.3 , 0.4 , 0.5 , 0.75 , 1) , function(i) return(round(length(genes_hvg) * i)))
+n_genes.grid = c(0, 2 , 5 , 10, 15 , 20, 30, 40 , 50, 100)
+effect_markers = c(0 , 0.02 , 0.05 , 0.1 , 0.15 , 0.2 , 0.4 , 0.5 , 0.75 , 1)
 
-anno = expand.grid(round = c(1:3) , n_markers = n_genes.grid , n_not_markers = n_genes.grid)
-anno$id = paste0(anno$round , "_n_markers_" , anno$n_markers , "__n_not_markers_" , anno$n_not_markers)
+anno = expand.grid(round = c(1:3) , n_markers = length(genes_hvg), effect_markers = effect_markers , n_not_markers = n_genes.grid)
+anno$id = paste0(anno$round , "_effect_" , anno$effect_markers , "__n_not_markers_" , anno$n_not_markers)
 
 genes_2_simulate = lapply(1:nrow(anno) , function(i){
-  out = data.frame(Gene = c(sample(rowdata$Gene[!rowdata$DEFacGroup2 == 1] , anno$n_markers[i]) , sample(rowdata$Gene[rowdata$DEFacGroup2 == 1] , anno$n_not_markers[i])))
-  out$gene_type = c(rep("marker" , anno$n_markers[i]) , rep("not_marker" , anno$n_not_markers[i]))
+  out = data.frame(Gene = c(rowdata$Gene[!rowdata$DEFacGroup2 == 1] , sample(rowdata$Gene[rowdata$DEFacGroup2 == 1] , anno$n_not_markers[i])))
+  out$gene_type = c(rep("marker" , length(genes_hvg)) , rep("not_marker" , anno$n_not_markers[i]))
   out = merge(out , rowdata , all.x = T , all.y = F)
-  out$range = ceiling(out$avg_group_1 * (out$DEFacGroup2 - 1))
-  out$range[out$gene_type == "not_marker"] = ceiling(out$avg_group_1[out$gene_type == "not_marker"]/2)
+  out$range = ceiling(out$med_group_1 * (out$DEFacGroup2 - 1) * anno$effect_markers[i])
+  out$range[out$gene_type == "not_marker"] = ceiling(out$med_group_1[out$gene_type == "not_marker"]/2)
   return(out)
 })
 names(genes_2_simulate) = anno$id
@@ -141,7 +150,7 @@ sces = bplapply(genes_2_simulate , function(current.genes_2_simulate){
   return(sce_simulated)
 }, BPPARAM = mcparam)
 names(sces) = anno$id
-saveRDS(sces , file = paste0(root.dir , "data/processed/da_de/simulations_controlled/sims.Rds"))
+saveRDS(sces , file = paste0(root.dir , "data/processed/da_de/simulations_controlled_2/sims.Rds"))
 
 
 ```
@@ -178,7 +187,7 @@ genes_2_simulate = bplapply(1:length(genes_2_simulate) , function(i){
   return(current.genes)
 } , BPPARAM = mcparam)
 names(genes_2_simulate) = anno$id
-saveRDS(genes_2_simulate , file = paste0(root.dir , "data/processed/da_de/simulations_controlled/simulated_genes.Rds"))
+saveRDS(genes_2_simulate , file = paste0(root.dir , "data/processed/da_de/simulations_controlled_2/simulated_genes.Rds"))
 
 
 

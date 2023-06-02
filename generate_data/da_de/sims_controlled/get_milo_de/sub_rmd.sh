@@ -10,7 +10,7 @@ script_name=miloDE_da_de
 
 #CHOOSE PARAMETERS
 #RAM in megabytes
-memory=800000
+memory=600000
 r_command="rusage[mem=${memory}]"
 #num_processors
 nproc=42

@@ -136,8 +136,8 @@ stat = bplapply(1:length(sims) , function(j){
     id = stringr::str_split(id , "_")
     id = id[[1]]
     stat_per_sim$round_sim = as.numeric(id[1])
-    stat_per_sim$n_markers = as.numeric(id[4])
-    stat_per_sim$n_not_markers = as.numeric(id[9])
+    stat_per_sim$effect_size = as.numeric(id[3])
+    stat_per_sim$n_not_markers = as.numeric(id[8])
   }
   else {
     stat_per_sim = NULL
