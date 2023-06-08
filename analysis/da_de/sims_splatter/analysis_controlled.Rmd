@@ -19,6 +19,12 @@ library(scran)
 library(miloR)
 library(miloDE)
 library(stringr)
+library(ggplot2)
+library(ggpubr)
+library(viridis)
+library(MetBrewer)
+library(dplyr)
+library(tibble)
 
 ncores = 24
 mcparam = MulticoreParam(workers = ncores)
@@ -127,7 +133,7 @@ ggsave(filename = paste0(figures.dir, "da/groupped_sim__fdr_001", ".png"), plot 
 
 ### Groupped by eveyrhting
 
-```{r heatmap-da-split-sim, message = FALSE}
+```{r heatmap-da-group-all, message = FALSE}
 
 
 stat_combined_reduced = unique(stat_combined[, c("id_sim" , "id_nhood_assignment" , "reducedDim_name", "frac_hoods_DA_001", "frac_hoods_DA_005", "frac_hoods_DA_01" , "n_markers" , "n_not_markers" , "round_sim" , "order" , "k" , "seed")] )
@@ -303,7 +309,7 @@ plots = lapply(1:nrow(anno) , function(i){
 
 ### Split by all
 
-```{r heatmap-de-split-all, message = FALSE}
+```{r heatmap-de-not-da-split-all, message = FALSE}
 
 
 stat_combined_reduced = unique(stat_combined[, c("id_sim" , "id_nhood_assignment" , "reducedDim_name", "gene_type", "frac_hoods_DE_not_DA_001", "frac_hoods_DE_not_DA_005", "frac_hoods_DE_not_DA_01" , "n_markers" , "n_not_markers" , "round_sim" , "order" , "k" , "seed")] )
@@ -344,7 +350,7 @@ plots = lapply(1:nrow(anno) , function(i){
 
 ### Groupped by same sim
 
-```{r heatmap-de-split-sim, message = FALSE}
+```{r heatmap-de-not-da-split-sim, message = FALSE}
 
 
 
@@ -388,7 +394,7 @@ plots = lapply(1:nrow(anno) , function(i){
 
 ### Groupped by eveyrhting
 
-```{r heatmap-de-group-all, message = FALSE}
+```{r heatmap-de-not-da-group-all, message = FALSE}
 
 
 stat_combined_reduced = unique(stat_combined[, c("id_sim" , "id_nhood_assignment" , "reducedDim_name", "gene_type", "frac_hoods_DE_not_DA_001", "frac_hoods_DE_not_DA_005", "frac_hoods_DE_not_DA_01" , "n_markers" , "n_not_markers" , "round_sim" , "order" , "k" , "seed")] )
