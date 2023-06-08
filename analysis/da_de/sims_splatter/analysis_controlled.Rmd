@@ -18,92 +18,443 @@ library(splatter)
 library(scran)
 library(miloR)
 library(miloDE)
+library(stringr)
 
-ncores = 7
+ncores = 24
 mcparam = MulticoreParam(workers = ncores)
 register(mcparam)
 set.seed(32)
 
 root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
 source(paste0(root.dir , "miloDE_analysis/core_functions.R"))
-figures.dir = paste0(root.dir , "figures/da_de/simulations_splatter/controlled/")
+figures.dir = paste0(root.dir , "figures/da_de/simulations_splatter/random/")
 
 # generated simulation data
-sces = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_controlled/sims.Rds"))
-simulated_genes = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_controlled/simulated_genes.Rds"))
-stat_da = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_controlled/stat_da.Rds"))
-stat_de = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_controlled/stat_de.Rds"))
+sces = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_random/sims.Rds"))
+simulated_genes = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_random/simulated_genes.Rds"))
+stat_da = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_random/stat_da.Rds"))
+stat_de = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_random/stat_de.Rds"))
 
-stat_combined = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_controlled/stat_combined_all_genes.Rds"))
+stat_combined = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_random/stat_combined_all_genes.Rds"))
 
 
 ```
 
-# Calc DA stat - temp
 
-```{r load, message = FALSE}
+# Heatmaps
+
+## DA
+
+### Split by all
+
+```{r heatmap-da-split-all, message = FALSE}
 
 
-get_stat_per_sim_and_nhood_assignment = function(id_sim , id_nhood_assignment , reducedDim_name , spatialFDR_DA.thresh = 0.1 , spatialFDR_DE.thresh = 0.1){
-  current.stat_da = stat_da[stat_da$id_sim == id_sim & stat_da$id_nhood_assignment == id_nhood_assignment & stat_da$reducedDim_name == reducedDim_name, ]
-  out = as.data.frame(current.stat_da %>% group_by(id_sim , id_nhood_assignment , reducedDim_name) %>%
-                                    dplyr::summarise(frac_hoods_DA = mean(SpatialFDR <= spatialFDR_DA.thresh , na.rm = T)))
+stat_combined_reduced = unique(stat_combined[, c("id_sim" , "id_nhood_assignment" , "reducedDim_name", "frac_hoods_DA_001", "frac_hoods_DA_005", "frac_hoods_DA_01" , "n_markers" , "n_not_markers" , "round_sim" , "order" , "k" , "seed")] )
+stat_combined_reduced$order_k = paste0(stat_combined_reduced$order , "_" , stat_combined_reduced$k)
 
-  out$reducedDim_name = as.character(reducedDim_name)
-  out$id_sim = as.character(id_sim)
-  out$id_nhood_assignment = as.character(id_nhood_assignment)
-  return(out)
+stat_combined_reduced$reducedDim_name[stat_combined_reduced$reducedDim_name == "pca.hvgs"] = "Supervised"
+stat_combined_reduced$reducedDim_name[stat_combined_reduced$reducedDim_name == "pca.all"] = "Unsupervised"
+
+get_plot = function(var){
+  p = ggplot(stat_combined_reduced , aes(x = factor(n_markers) , y = factor(n_not_markers) , fill = stat_combined_reduced[,var])) +
+    geom_tile() + 
+    facet_wrap(~reducedDim_name + round_sim + order_k , ncol = 12) + 
+    scale_fill_viridis(discrete = F , name = "Fraction of DA nhoods") +
+    theme_bw() + 
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+    labs(x = "# of altered genes contributing to joint variance" , y = "# of altered genes contributing to case variance") +
+    theme(legend.position = "top")
+  p
+  return(p)
 }
 
 
+p = get_plot("frac_hoods_DA_01")
+ggsave(filename = paste0(figures.dir, "da/split_all__fdr_01", ".png"), plot = p, width = 20, height = 6)
 
-anno_sims = expand.grid(id_sim = unique(stat_da$id_sim), id_nhood_assignment = unique(stat_da$id_nhood_assignment) ,  reducedDim_name = unique(stat_da$reducedDim_name))
+p = get_plot("frac_hoods_DA_005")
+ggsave(filename = paste0(figures.dir, "da/split_all__fdr_005", ".png"), plot = p, width = 20, height = 6)
 
-stat = bplapply(1:nrow(anno_sims) , function(i){
-  out = get_stat_per_sim_and_nhood_assignment(anno_sims$id_sim[i] , anno_sims$id_nhood_assignment[i] , anno_sims$reducedDim_name[i])
-  return(out)
-}, BPPARAM = mcparam)
-stat = do.call(rbind , stat)
-stat = merge(stat , unique(stat_da[, c("id_sim" , "n_hvgs" , "n_not_hvgs", "round_sim" , "order" , "k" , "seed" , "id_nhood_assignment" , "reducedDim_name")]) , by = c("id_sim" , "id_nhood_assignment" , "reducedDim_name") , all.x = T , all.y = F)
+p = get_plot("frac_hoods_DA_001")
+ggsave(filename = paste0(figures.dir, "da/split_all__fdr_001", ".png"), plot = p, width = 20, height = 6)
 
 
-stat$reducedDim_name[stat$reducedDim_name == "pca.hvgs"] = "Case-specific variance excluded"
-stat$reducedDim_name[stat$reducedDim_name == "pca.all"] = "Case-specific variance included"
+```
 
-p = ggplot(stat , aes(x = factor(n_hvgs) , y = factor(n_not_hvgs) , fill = frac_hoods_DA)) +
-  geom_tile() + 
-  facet_wrap(~reducedDim_name + round_sim) + 
-  scale_fill_viridis(discrete = F , name = "Fraction\nof DA nhoods") +
-  theme_bw() + 
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
-  labs(x = "# of altered genes contributing to joint variance" , y = "# of altered genes\ncontributing to case variance") 
-p
-ggsave(filename = paste0(figures.dir, "da_stat", ".png"), plot = p, width = 10, height = 6)
+### Groupped by same sim
+
+```{r heatmap-da-split-sim, message = FALSE}
+
+
+stat_combined_reduced = unique(stat_combined[, c("id_sim" , "id_nhood_assignment" , "reducedDim_name", "frac_hoods_DA_001", "frac_hoods_DA_005", "frac_hoods_DA_01" , "n_markers" , "n_not_markers" , "round_sim" , "order" , "k" , "seed")] )
+stat_combined_reduced$order_k = paste0(stat_combined_reduced$order , "_" , stat_combined_reduced$k)
+
+stat_combined_reduced$reducedDim_name[stat_combined_reduced$reducedDim_name == "pca.hvgs"] = "Supervised"
+stat_combined_reduced$reducedDim_name[stat_combined_reduced$reducedDim_name == "pca.all"] = "Unsupervised"
+
+stat_combined_reduced = as.data.frame(stat_combined_reduced %>% group_by(id_sim , reducedDim_name, frac_hoods_DA_001, frac_hoods_DA_005, frac_hoods_DA_01 , n_markers , n_not_markers , round_sim) %>% dplyr::summarise(frac_hoods_DA_001 = mean(frac_hoods_DA_001 , na.rm = T) , frac_hoods_DA_005 = mean(frac_hoods_DA_005 , na.rm = T) , frac_hoods_DA_01 = mean(frac_hoods_DA_01 , na.rm = T)) )
+
+
+
+get_plot = function(var){
+  p = ggplot(stat_combined_reduced , aes(x = factor(n_markers) , y = factor(n_not_markers) , fill = stat_combined_reduced[,var])) +
+    geom_tile() + 
+    facet_wrap(~reducedDim_name + round_sim) + 
+    scale_fill_viridis(discrete = F , name = "Fraction of DA nhoods") +
+    theme_bw() + 
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+    labs(x = "# of altered genes contributing to joint variance" , y = "# of altered genes contributing to case variance") +
+    theme(legend.position = "top")
+  p
+  return(p)
+}
+
+
+p = get_plot("frac_hoods_DA_01")
+ggsave(filename = paste0(figures.dir, "da/groupped_sim__fdr_01", ".png"), plot = p, width = 8, height = 6)
+
+p = get_plot("frac_hoods_DA_005")
+ggsave(filename = paste0(figures.dir, "da/groupped_sim__fdr_005", ".png"), plot = p, width = 8, height = 6)
+
+p = get_plot("frac_hoods_DA_001")
+ggsave(filename = paste0(figures.dir, "da/groupped_sim__fdr_001", ".png"), plot = p, width = 8, height = 6)
+
 
 
 
 ```
 
-# UMAP on how pop is moving
+### Groupped by eveyrhting
 
-```{r load, message = FALSE}
+```{r heatmap-da-split-sim, message = FALSE}
 
 
-ids = sapply(names(sces) , function(str) str_detect(str, "__n_not_markers_0", negate = FALSE))
-ids = as.numeric( which(ids) )
+stat_combined_reduced = unique(stat_combined[, c("id_sim" , "id_nhood_assignment" , "reducedDim_name", "frac_hoods_DA_001", "frac_hoods_DA_005", "frac_hoods_DA_01" , "n_markers" , "n_not_markers" , "round_sim" , "order" , "k" , "seed")] )
+stat_combined_reduced$order_k = paste0(stat_combined_reduced$order , "_" , stat_combined_reduced$k)
 
-ids = c( c(1,4,7,10,13,16,19,22,25,28,31) , c(1,4,7,10,13,16,19,22,25,28,31) + 1 , c(1,4,7,10,13,16,19,22,25,28,31) + 2)
+stat_combined_reduced$reducedDim_name[stat_combined_reduced$reducedDim_name == "pca.hvgs"] = "Supervised"
+stat_combined_reduced$reducedDim_name[stat_combined_reduced$reducedDim_name == "pca.all"] = "Unsupervised"
+
+stat_combined_reduced = as.data.frame(stat_combined_reduced %>% group_by(reducedDim_name, frac_hoods_DA_001, frac_hoods_DA_005, frac_hoods_DA_01 , n_markers , n_not_markers ) %>% dplyr::summarise(frac_hoods_DA_001 = mean(frac_hoods_DA_001 , na.rm = T) , frac_hoods_DA_005 = mean(frac_hoods_DA_005 , na.rm = T) , frac_hoods_DA_01 = mean(frac_hoods_DA_01 , na.rm = T)) )
+
+
+
+get_plot = function(var){
+  p = ggplot(stat_combined_reduced , aes(x = factor(n_markers) , y = factor(n_not_markers) , fill = stat_combined_reduced[,var])) +
+    geom_tile() + 
+    facet_wrap(~reducedDim_name) + 
+    scale_fill_viridis(discrete = F , name = "Fraction of DA nhoods") +
+    theme_bw() + 
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+    labs(x = "# of altered genes contributing to joint variance" , y = "# of altered genes\ncontributing to case variance") +
+    theme(legend.position = "top")
+  p
+  return(p)
+}
+
+
+p = get_plot("frac_hoods_DA_01")
+ggsave(filename = paste0(figures.dir, "da/groupped_all__fdr_01", ".png"), plot = p, width = 5, height = 3)
+
+p = get_plot("frac_hoods_DA_005")
+ggsave(filename = paste0(figures.dir, "da/groupped_all__fdr_005", ".png"), plot = p, width = 5, height = 3)
+
+p = get_plot("frac_hoods_DA_001")
+ggsave(filename = paste0(figures.dir, "da/groupped_all__fdr_001", ".png"), plot = p, width = 5, height = 3)
+
+
+
+```
+
+
+## DE - overall
+
+### Split by all
+
+```{r heatmap-de-split-all, message = FALSE}
+
+
+stat_combined_reduced = unique(stat_combined[, c("id_sim" , "id_nhood_assignment" , "reducedDim_name", "gene_type", "frac_hoods_DE_001", "frac_hoods_DE_005", "frac_hoods_DE_01" , "n_markers" , "n_not_markers" , "round_sim" , "order" , "k" , "seed")] )
+stat_combined_reduced$order_k = paste0(stat_combined_reduced$order , "_" , stat_combined_reduced$k)
+
+stat_combined_reduced$reducedDim_name[stat_combined_reduced$reducedDim_name == "pca.hvgs"] = "Supervised"
+stat_combined_reduced$reducedDim_name[stat_combined_reduced$reducedDim_name == "pca.all"] = "Unsupervised"
+
+get_plot = function(var , gene_type){
+  current.stat = stat_combined_reduced[stat_combined_reduced$gene_type == gene_type , ]
+  p = ggplot(current.stat , aes(x = factor(n_markers) , y = factor(n_not_markers) , fill = current.stat[,var])) +
+    geom_tile() + 
+    facet_wrap(~reducedDim_name + round_sim + order_k , ncol = 12) + 
+    scale_fill_viridis(discrete = F , name = "Fraction of DE nhoods") +
+    theme_bw() + 
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+    labs(x = "# of altered genes contributing to joint variance" , y = "# of altered genes contributing to case variance") +
+    theme(legend.position = "top")
+  p
+  return(p)
+}
+
+
+anno = expand.grid(gene_type = c("marker" , "not_marker") , var = c("01" , "005" , "001"))
+
+
+plots = lapply(1:nrow(anno) , function(i){
+  p = get_plot(paste0("frac_hoods_DE_" ,as.character(anno$var[i])) , as.character(anno$gene_type[i]))
+  ggsave(filename = paste0(figures.dir, "de/" , as.character(anno$gene_type[i]), "/split_all__fdr_" , as.character(anno$var[i]), ".png"), plot = p, width = 20, height = 6)
+})
+
+
+
+
+
+```
+
+
+### Groupped by same sim
+
+```{r heatmap-de-split-sim, message = FALSE}
+
+
+
+stat_combined_reduced = unique(stat_combined[, c("id_sim" , "id_nhood_assignment" , "reducedDim_name", "gene_type", "frac_hoods_DE_001", "frac_hoods_DE_005", "frac_hoods_DE_01" , "n_markers" , "n_not_markers" , "round_sim" , "order" , "k" , "seed")] )
+stat_combined_reduced$order_k = paste0(stat_combined_reduced$order , "_" , stat_combined_reduced$k)
+
+stat_combined_reduced$reducedDim_name[stat_combined_reduced$reducedDim_name == "pca.hvgs"] = "Supervised"
+stat_combined_reduced$reducedDim_name[stat_combined_reduced$reducedDim_name == "pca.all"] = "Unsupervised"
+
+
+stat_combined_reduced = as.data.frame(stat_combined_reduced %>% group_by(id_sim , reducedDim_name, gene_type , n_markers , n_not_markers , round_sim) %>% dplyr::summarise(frac_hoods_DE_001 = mean(frac_hoods_DE_001 , na.rm = T) , frac_hoods_DE_005 = mean(frac_hoods_DE_005 , na.rm = T) , frac_hoods_DE_01 = mean(frac_hoods_DE_01 , na.rm = T)) )
+
+
+
+get_plot = function(var , gene_type){
+  current.stat = stat_combined_reduced[stat_combined_reduced$gene_type == gene_type , ]
+  p = ggplot(current.stat , aes(x = factor(n_markers) , y = factor(n_not_markers) , fill = current.stat[,var])) +
+    geom_tile() + 
+    facet_wrap(~reducedDim_name + round_sim ) + 
+    scale_fill_viridis(discrete = F , name = "Fraction of DE nhoods") +
+    theme_bw() + 
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+    labs(x = "# of altered genes contributing to joint variance" , y = "# of altered genes contributing to case variance") +
+    theme(legend.position = "top")
+  p
+  return(p)
+}
+
+
+anno = expand.grid(gene_type = c("marker" , "not_marker") , var = c("01" , "005" , "001"))
+
+
+plots = lapply(1:nrow(anno) , function(i){
+  p = get_plot(paste0("frac_hoods_DE_" ,as.character(anno$var[i])) , as.character(anno$gene_type[i]))
+  ggsave(filename = paste0(figures.dir, "de/" , as.character(anno$gene_type[i]), "/groupped_sim__fdr_" , as.character(anno$var[i]), ".png"), plot = p, width = 8, height = 6)
+})
+
+
+
+```
+
+### Groupped by eveyrhting
+
+```{r heatmap-de-group-all, message = FALSE}
+
+
+stat_combined_reduced = unique(stat_combined[, c("id_sim" , "id_nhood_assignment" , "reducedDim_name", "gene_type", "frac_hoods_DE_001", "frac_hoods_DE_005", "frac_hoods_DE_01" , "n_markers" , "n_not_markers" , "round_sim" , "order" , "k" , "seed")] )
+stat_combined_reduced$order_k = paste0(stat_combined_reduced$order , "_" , stat_combined_reduced$k)
+
+stat_combined_reduced$reducedDim_name[stat_combined_reduced$reducedDim_name == "pca.hvgs"] = "Supervised"
+stat_combined_reduced$reducedDim_name[stat_combined_reduced$reducedDim_name == "pca.all"] = "Unsupervised"
+
+
+stat_combined_reduced = as.data.frame(stat_combined_reduced %>% group_by(reducedDim_name, gene_type , n_markers , n_not_markers , round_sim) %>% dplyr::summarise(frac_hoods_DE_001 = mean(frac_hoods_DE_001 , na.rm = T) , frac_hoods_DE_005 = mean(frac_hoods_DE_005 , na.rm = T) , frac_hoods_DE_01 = mean(frac_hoods_DE_01 , na.rm = T)) )
+
+
+
+get_plot = function(var , gene_type){
+  current.stat = stat_combined_reduced[stat_combined_reduced$gene_type == gene_type , ]
+  p = ggplot(current.stat , aes(x = factor(n_markers) , y = factor(n_not_markers) , fill = current.stat[,var])) +
+    geom_tile() + 
+    facet_wrap(~reducedDim_name ) + 
+    scale_fill_viridis(discrete = F , name = "Fraction of DE nhoods" ) +
+    theme_bw() + 
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+    labs(x = "# of altered genes contributing to joint variance" , y = "# of altered genes\ncontributing to case variance") +
+    theme(legend.position = "top")
+  p
+  return(p)
+}
+
+
+anno = expand.grid(gene_type = c("marker" , "not_marker") , var = c("01" , "005" , "001"))
+
+
+plots = lapply(1:nrow(anno) , function(i){
+  p = get_plot(paste0("frac_hoods_DE_" ,as.character(anno$var[i])) , as.character(anno$gene_type[i]))
+  ggsave(filename = paste0(figures.dir, "de/" , as.character(anno$gene_type[i]), "/groupped_all__fdr_" , as.character(anno$var[i]), ".png"), plot = p, width = 5, height = 3)
+})
+
+
+
+
+```
+
+## DE within not DA
+
+### Split by all
+
+```{r heatmap-de-split-all, message = FALSE}
+
+
+stat_combined_reduced = unique(stat_combined[, c("id_sim" , "id_nhood_assignment" , "reducedDim_name", "gene_type", "frac_hoods_DE_not_DA_001", "frac_hoods_DE_not_DA_005", "frac_hoods_DE_not_DA_01" , "n_markers" , "n_not_markers" , "round_sim" , "order" , "k" , "seed")] )
+stat_combined_reduced$order_k = paste0(stat_combined_reduced$order , "_" , stat_combined_reduced$k)
+
+stat_combined_reduced$reducedDim_name[stat_combined_reduced$reducedDim_name == "pca.hvgs"] = "Supervised"
+stat_combined_reduced$reducedDim_name[stat_combined_reduced$reducedDim_name == "pca.all"] = "Unsupervised"
+
+get_plot = function(var , gene_type){
+  current.stat = stat_combined_reduced[stat_combined_reduced$gene_type == gene_type , ]
+  p = ggplot(current.stat , aes(x = factor(n_markers) , y = factor(n_not_markers) , fill = current.stat[,var])) +
+    geom_tile() + 
+    facet_wrap(~reducedDim_name + round_sim + order_k , ncol = 12) + 
+    scale_fill_viridis(discrete = F , name = "Fraction of DE nhoods\n(in not DA nhoods)") +
+    theme_bw() + 
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+    labs(x = "# of altered genes contributing to joint variance" , y = "# of altered genes contributing to case variance") +
+    theme(legend.position = "top")
+  p
+  return(p)
+}
+
+
+anno = expand.grid(gene_type = c("marker" , "not_marker") , var = c("01" , "005" , "001"))
+
+
+plots = lapply(1:nrow(anno) , function(i){
+  p = get_plot(paste0("frac_hoods_DE_not_DA_" ,as.character(anno$var[i])) , as.character(anno$gene_type[i]))
+  ggsave(filename = paste0(figures.dir, "de_in_not_da/" , as.character(anno$gene_type[i]), "/split_all__fdr_" , as.character(anno$var[i]), ".png"), plot = p, width = 20, height = 6)
+})
+
+
+
+
+
+```
+
+
+### Groupped by same sim
+
+```{r heatmap-de-split-sim, message = FALSE}
+
+
+
+stat_combined_reduced = unique(stat_combined[, c("id_sim" , "id_nhood_assignment" , "reducedDim_name", "gene_type", "frac_hoods_DE_not_DA_001", "frac_hoods_DE_not_DA_005", "frac_hoods_DE_not_DA_01" , "n_markers" , "n_not_markers" , "round_sim" , "order" , "k" , "seed")] )
+stat_combined_reduced$order_k = paste0(stat_combined_reduced$order , "_" , stat_combined_reduced$k)
+
+stat_combined_reduced$reducedDim_name[stat_combined_reduced$reducedDim_name == "pca.hvgs"] = "Supervised"
+stat_combined_reduced$reducedDim_name[stat_combined_reduced$reducedDim_name == "pca.all"] = "Unsupervised"
+
+
+stat_combined_reduced = as.data.frame(stat_combined_reduced %>% group_by(id_sim , reducedDim_name, gene_type , n_markers , n_not_markers , round_sim) %>% dplyr::summarise(frac_hoods_DE_001 = mean(frac_hoods_DE_not_DA_001 , na.rm = T) , frac_hoods_DE_005 = mean(frac_hoods_DE_not_DA_005 , na.rm = T) , frac_hoods_DE_01 = mean(frac_hoods_DE_not_DA_01 , na.rm = T)) )
+
+
+
+get_plot = function(var , gene_type){
+  current.stat = stat_combined_reduced[stat_combined_reduced$gene_type == gene_type , ]
+  p = ggplot(current.stat , aes(x = factor(n_markers) , y = factor(n_not_markers) , fill = current.stat[,var])) +
+    geom_tile() + 
+    facet_wrap(~reducedDim_name + round_sim ) + 
+    scale_fill_viridis(discrete = F , name = "Fraction of DE nhoods\n(in not DA nhoods)") +
+    theme_bw() + 
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+    labs(x = "# of altered genes contributing to joint variance" , y = "# of altered genes contributing to case variance") +
+    theme(legend.position = "top")
+  p
+  return(p)
+}
+
+
+anno = expand.grid(gene_type = c("marker" , "not_marker") , var = c("01" , "005" , "001"))
+
+
+plots = lapply(1:nrow(anno) , function(i){
+  p = get_plot(paste0("frac_hoods_DE_" ,as.character(anno$var[i])) , as.character(anno$gene_type[i]))
+  ggsave(filename = paste0(figures.dir, "de_in_not_da/" , as.character(anno$gene_type[i]), "/groupped_sim__fdr_" , as.character(anno$var[i]), ".png"), plot = p, width = 8, height = 6)
+})
+
+
+
+```
+
+### Groupped by eveyrhting
+
+```{r heatmap-de-group-all, message = FALSE}
+
+
+stat_combined_reduced = unique(stat_combined[, c("id_sim" , "id_nhood_assignment" , "reducedDim_name", "gene_type", "frac_hoods_DE_not_DA_001", "frac_hoods_DE_not_DA_005", "frac_hoods_DE_not_DA_01" , "n_markers" , "n_not_markers" , "round_sim" , "order" , "k" , "seed")] )
+stat_combined_reduced$order_k = paste0(stat_combined_reduced$order , "_" , stat_combined_reduced$k)
+
+stat_combined_reduced$reducedDim_name[stat_combined_reduced$reducedDim_name == "pca.hvgs"] = "Supervised"
+stat_combined_reduced$reducedDim_name[stat_combined_reduced$reducedDim_name == "pca.all"] = "Unsupervised"
+
+
+stat_combined_reduced = as.data.frame(stat_combined_reduced %>% group_by(reducedDim_name, gene_type , n_markers , n_not_markers , round_sim) %>% dplyr::summarise(frac_hoods_DE_001 = mean(frac_hoods_DE_not_DA_001 , na.rm = T) , frac_hoods_DE_005 = mean(frac_hoods_DE_not_DA_005 , na.rm = T) , frac_hoods_DE_01 = mean(frac_hoods_DE_not_DA_01 , na.rm = T)) )
+
+
+
+get_plot = function(var , gene_type){
+  current.stat = stat_combined_reduced[stat_combined_reduced$gene_type == gene_type , ]
+  p = ggplot(current.stat , aes(x = factor(n_markers) , y = factor(n_not_markers) , fill = current.stat[,var])) +
+    geom_tile() + 
+    facet_wrap(~reducedDim_name ) + 
+    scale_fill_viridis(discrete = F , name = "Fraction of DE nhoods" ) +
+    theme_bw() + 
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+    labs(x = "# of altered genes contributing to joint variance" , y = "# of altered genes\ncontributing to case variance") +
+    theme(legend.position = "top")
+  p
+  return(p)
+}
+
+
+anno = expand.grid(gene_type = c("marker" , "not_marker") , var = c("01" , "005" , "001"))
+
+
+plots = lapply(1:nrow(anno) , function(i){
+  p = get_plot(paste0("frac_hoods_DE_" ,as.character(anno$var[i])) , as.character(anno$gene_type[i]))
+  ggsave(filename = paste0(figures.dir, "de_in_not_da/" , as.character(anno$gene_type[i]), "/groupped_all__fdr_" , as.character(anno$var[i]), ".png"), plot = p, width = 5, height = 3)
+})
+
+
+```
+
+## DA vs DE
+
+@@ Mb later, lets see if we need it
+
+```{r da-vs-de, message = FALSE}
+
+
+
+
+```
+
+# UMAP cartoons
+
+## Plotting function
+
+```{r plotting-function, message = FALSE}
 
 
 cols = met.brewer("Egypt",4)
 cols = cols[c(3:4)]
 
-get_plot = function(id){
+get_plot = function(id , red_dim){
   sce = sces[[id]]
 
-  umaps = as.data.frame( scater::calculateUMAP(t(reducedDim(sce , "pca.hvgs"))) )
-  reducedDim(sce , paste0("umap_" , "pca.hvgs")) = umaps
-  meta = cbind(as.data.frame(colData(sce)) , as.data.frame(reducedDim(sce , "umap_pca.hvgs")))
+  umaps = as.data.frame( scater::calculateUMAP(t(reducedDim(sce , red_dim))) )
+  reducedDim(sce , "umap") = umaps
+  meta = cbind(as.data.frame(colData(sce)) , as.data.frame(reducedDim(sce , "umap")))
   meta$Group = as.character(meta$Group)
   meta$Group[meta$Group == "Group1"] = "Cell type 1"
   meta$Group[meta$Group == "Group2"] = "Cell type 2"
@@ -111,271 +462,133 @@ get_plot = function(id){
   meta$type[meta$type == "cond_B"] = "Condition B"
   
   meta = meta[sample(nrow(meta)) , ]
-  title = names(sces)[id]
-  title = str_remove(title , "__n_not_markers_0")
+  #title = names(sces)[id]
+  #title = str_remove(title , "__n_not_markers_0")
   p = ggplot(meta , aes(x = V1 , y = V2 , col = factor(Group))) + 
     geom_point(alpha = .5 , size = .5) +
     theme_bw() +
     facet_wrap(~type, nrow = 2) + 
-    ggtitle(title) + 
     labs(x = "UMAP-1" , y = "UMAP-2") + 
-    scale_color_manual(values = cols , name = "Cell type") + 
-    ggtitle(title)
+    scale_color_manual(values = cols , name = "Cell type") 
   p
   return(p)
 }
 
 
-plots = lapply(ids , function(id){
-  print(id)
-  p = get_plot(id)
-  return(p)
-})
-p = ggarrange(plotlist = plots , nrow = 3 , ncol = 11 , common.legend = T)
+
+
+
+```
+
+## Base simulation
+
+```{r umap-base, message = FALSE}
+
+
+id = 1
+p = get_plot(id, "pca.hvgs")
 p
-ggsave(filename = paste0(figures.dir, "umap_movement", ".png"), plot = p, width = 25, height = 10)
+ggsave(filename = paste0(figures.dir, "umaps/hvgs/" , names(sces)[id], ".png"), plot = p, width = 4, height = 5)
+
+
+p = get_plot(id, "pca.all")
+p
+ggsave(filename = paste0(figures.dir, "umaps/all/" , names(sces)[id], ".png"), plot = p, width = 4, height = 5)
+
+
+
+```
+
+## Only marker perturbed
+
+```{r umap-marker, message = FALSE}
+
+
+id = 25
+p = get_plot(id, "pca.hvgs")
+p
+ggsave(filename = paste0(figures.dir, "umaps/hvgs/" , names(sces)[id], ".png"), plot = p, width = 4, height = 5)
+
+
+p = get_plot(id, "pca.all")
+p
+ggsave(filename = paste0(figures.dir, "umaps/all/" , names(sces)[id], ".png"), plot = p, width = 4, height = 5)
+
+
+
+```
+
+## Only not markers perturbed
+
+```{r umap-not-marker, message = FALSE}
+
+
+id = 361
+p = get_plot(id, "pca.hvgs")
+p
+ggsave(filename = paste0(figures.dir, "umaps/hvgs/" , names(sces)[id], ".png"), plot = p, width = 4, height = 5)
+
+
+p = get_plot(id, "pca.all")
+p
+ggsave(filename = paste0(figures.dir, "umaps/all/" , names(sces)[id], ".png"), plot = p, width = 4, height = 5)
+
+
+
+```
+
+## Both perturbed
+
+```{r umaps-both, message = FALSE}
+
+
+id = 385
+p = get_plot(id, "pca.hvgs")
+p
+ggsave(filename = paste0(figures.dir, "umaps/hvgs/" , names(sces)[id], ".png"), plot = p, width = 4, height = 5)
+
+
+p = get_plot(id, "pca.all")
+p
+ggsave(filename = paste0(figures.dir, "umaps/all/" , names(sces)[id], ".png"), plot = p, width = 4, height = 5)
 
 
 
 ```
 
 
+## Overall grid (split by sims)
 
 
-# Cartoon for simulations
-
-## Base simualtion
-
-```{r get-milo-assign, message = FALSE}
-
-idx = 1
-sce = sces[[idx]]
-
-umaps = as.data.frame( scater::calculateUMAP(t(reducedDim(sce , "pca.hvgs"))) )
-reducedDim(sce , paste0("umap_" , "pca.hvgs")) = umaps
-umaps = as.data.frame( scater::calculateUMAP(t(reducedDim(sce , "pca.all"))) )
-reducedDim(sce , paste0("umap_" , "pca.all")) = umaps
-
-meta.hvgs = cbind(as.data.frame(colData(sce)) , as.data.frame(reducedDim(sce , "umap_pca.hvgs")))
-meta.all = cbind(as.data.frame(colData(sce)) , as.data.frame(reducedDim(sce , "umap_pca.all")))
+```{r umaps-all, message = FALSE}
 
 
 
-cols = met.brewer("Egypt",4)
-cols = cols[c(3:4)]
-
-get_plot = function(meta , title = NULL){
-  meta$Group = as.character(meta$Group)
-  meta$Group[meta$Group == "Group1"] = "Cell type 1"
-  meta$Group[meta$Group == "Group2"] = "Cell type 2"
-  meta$type[meta$type == "cond_A"] = "Condition A"
-  meta$type[meta$type == "cond_B"] = "Condition B"
-  p = ggplot(meta , aes(x = V1 , y = V2 , col = factor(Group))) + 
-    geom_point(alpha = .5) +
-    theme_bw() +
-    facet_wrap(~type, nrow = 2) + 
-    ggtitle(title) + 
-    labs(x = "UMAP-1" , y = "UMAP-2") + 
-    scale_color_manual(values = cols , name = "Cell type")
+get_all_plots = function(round_sim , red_dim){
+  ids = sapply(names(sces) , function(str) str_detect(str , paste0(round_sim, "_n_markers_"), negate = FALSE))
+  ids = as.numeric( which(ids) )
+  
+  plots = bplapply(ids , function(id){
+    print(id)
+    p = get_plot(id , red_dim)
+    return(p)
+  }, BPPARAM = mcparam)
+  p = ggarrange(plotlist = plots , nrow = 12 , ncol = 12 , common.legend = T)
   return(p)
 }
 
 
-p = get_plot(meta.all)
-p
-ggsave(filename = paste0(figures.dir, "cartoon/base_sim", ".png"), plot = p, width = 5, height = 7)
+anno = expand.grid(round_sim = c(1,2,3) , red_dim = c("all" , "hvgs"))
 
-
-
-
-```
-
-
-## Both types of genes are altered
-
-```{r get-milo-assign, message = FALSE}
-
-
-idx = 303
-sce = sces[[idx]]
-
-umaps = as.data.frame( scater::calculateUMAP(t(reducedDim(sce , "pca.hvgs"))) )
-reducedDim(sce , paste0("umap_" , "pca.hvgs")) = umaps
-umaps = as.data.frame( scater::calculateUMAP(t(reducedDim(sce , "pca.all"))) )
-reducedDim(sce , paste0("umap_" , "pca.all")) = umaps
-
-meta.hvgs = cbind(as.data.frame(colData(sce)) , as.data.frame(reducedDim(sce , "umap_pca.hvgs")))
-meta.all = cbind(as.data.frame(colData(sce)) , as.data.frame(reducedDim(sce , "umap_pca.all")))
-
-
-p1 = get_plot(meta.hvgs , "Case-specific variance excluded")
-p2 = get_plot(meta.all , "Case-specific variance included")
-p = ggarrange(p1,p2 , common.legend = T)
-p
-ggsave(filename = paste0(figures.dir, "cartoon/altered_both_sim", ".png"), plot = p, width = 10, height = 7)
-
-
-
-```
-
-## Both types of genes are altered greatly
-
-```{r get-milo-assign, message = FALSE}
-
-
-idx = 358
-sce = sces[[idx]]
-
-umaps = as.data.frame( scater::calculateUMAP(t(reducedDim(sce , "pca.hvgs"))) )
-reducedDim(sce , paste0("umap_" , "pca.hvgs")) = umaps
-umaps = as.data.frame( scater::calculateUMAP(t(reducedDim(sce , "pca.all"))) )
-reducedDim(sce , paste0("umap_" , "pca.all")) = umaps
-
-meta.hvgs = cbind(as.data.frame(colData(sce)) , as.data.frame(reducedDim(sce , "umap_pca.hvgs")))
-meta.all = cbind(as.data.frame(colData(sce)) , as.data.frame(reducedDim(sce , "umap_pca.all")))
-
-
-p1 = get_plot(meta.hvgs , "Case-specific variance excluded")
-p2 = get_plot(meta.all , "Case-specific variance included")
-p = ggarrange(p1,p2 , common.legend = T)
-p
-ggsave(filename = paste0(figures.dir, "cartoon/altered_both_sim_greatly", ".png"), plot = p, width = 10, height = 7)
-
-
-
-idx.grid = c( paste0(c(1,2,3) , "_n_markers_124__n_not_markers_25") , paste0(c(1,2,3) , "_n_markers_165__n_not_markers_25") )
-
-
-plots = lapply(idx.grid , function(idx){
-  idx = which(names(sces ) == idx)
-  sce = sces[[idx]]
-
-  umaps = as.data.frame( scater::calculateUMAP(t(reducedDim(sce , "pca.hvgs"))) )
-  reducedDim(sce , paste0("umap_" , "pca.hvgs")) = umaps
-  umaps = as.data.frame( scater::calculateUMAP(t(reducedDim(sce , "pca.all"))) )
-  reducedDim(sce , paste0("umap_" , "pca.all")) = umaps
-  
-  meta.hvgs = cbind(as.data.frame(colData(sce)) , as.data.frame(reducedDim(sce , "umap_pca.hvgs")))
-  meta.all = cbind(as.data.frame(colData(sce)) , as.data.frame(reducedDim(sce , "umap_pca.all")))
-
-
-  p1 = get_plot(meta.hvgs , "Case-specific variance excluded") + ggtitle(names(sces)[idx])
-  p2 = get_plot(meta.all , "Case-specific variance included")
-  p = ggarrange(p1,p2 , common.legend = T)
-  print(p)
+plots = lapply(1:nrow(anno) , function(i){
+  p = get_all_plots(as.numeric(as.character(anno$round_sim[i])) , red_dim = paste0("pca.", as.character(anno$red_dim[i])))
+  ggsave(filename = paste0(figures.dir, "umaps/" , as.character(anno$red_dim[i]), "/" , "all_" , as.character(anno$round_sim[i]), ".png"), plot = p, width = 17, height = 22)
 })
 
 
-```
-
-
-# How DA looks like
-
-```{r get-milo-assign, message = FALSE}
-
-
-stat = as.data.frame(stat_combined_genes_groupped %>% group_by(n_hvgs , n_not_hvgs , reducedDim_name) %>% dplyr::summarise(frac_hoods_DA = mean(frac_hoods_DA , na.rm = T) , frac_hoods_DE = mean(frac_hoods_DE , na.rm = T)))
-stat$reducedDim_name[stat$reducedDim_name == "pca.hvgs"] = "Case-specific variance excluded"
-stat$reducedDim_name[stat$reducedDim_name == "pca.all"] = "Case-specific variance included"
-
-p = ggplot(stat , aes(x = factor(n_hvgs) , y = factor(n_not_hvgs) , fill = frac_hoods_DA)) +
-  geom_tile() + 
-  facet_wrap(~reducedDim_name) + 
-  scale_fill_viridis(discrete = F , name = "Fraction\nof DA nhoods") +
-  theme_bw() + 
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
-  labs(x = "# of altered genes contributing to joint variance" , y = "# of altered genes\ncontributing to case variance") 
-p
-ggsave(filename = paste0(figures.dir, "da_stat", ".png"), plot = p, width = 10, height = 5)
 
 
 ```
-
-# How DE looks like
-
-## All genes combined
-
-```{r get-milo-assign, message = FALSE}
-
-
-stat = as.data.frame(stat_combined_genes_groupped %>% group_by(n_hvgs , n_not_hvgs , reducedDim_name , gene_type) %>% dplyr::summarise(frac_hoods_DA = mean(frac_hoods_DA , na.rm = T) , frac_hoods_DE = mean(frac_hoods_DE , na.rm = T)))
-
-stat = stat[!is.na(stat$frac_hoods_DE) , ]
-
-stat$reducedDim_name[stat$reducedDim_name == "pca.hvgs"] = "Case-specific variance excluded"
-stat$reducedDim_name[stat$reducedDim_name == "pca.all"] = "Case-specific variance included"
-stat$gene_type[stat$gene_type == "marker"] = "Genes contributing to joint variance"
-stat$gene_type[stat$gene_type == "not_marker"] = "Genes contributing to case variance"
-
-p = ggplot(stat , aes(x = factor(n_hvgs) , y = factor(n_not_hvgs) , fill = frac_hoods_DE)) +
-  geom_tile() + 
-  facet_wrap(~gene_type + reducedDim_name) + 
-  scale_fill_viridis(discrete = F) +
-  theme_bw() + 
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
-  labs(x = "# of altered genes contributing to joint variance" , y = "# of altered genes\ncontributing to case variance") 
-p
-ggsave(filename = paste0(figures.dir, "de_stat_genes_groupped", ".png"), plot = p, width = 10, height = 10)
-
-
-```
-
-# DA vs DE
-
-```{r get-milo-assign, message = FALSE}
-
-
-stat = as.data.frame(stat_combined_genes_groupped %>% group_by(n_hvgs , n_not_hvgs , reducedDim_name , gene_type) %>% dplyr::summarise(frac_hoods_DA = mean(frac_hoods_DA , na.rm = T) , frac_hoods_DE = mean(frac_hoods_DE , na.rm = T)))
-
-stat = stat[!is.na(stat$frac_hoods_DE) , ]
-
-stat$reducedDim_name[stat$reducedDim_name == "pca.hvgs"] = "Case-specific variance excluded"
-stat$reducedDim_name[stat$reducedDim_name == "pca.all"] = "Case-specific variance included"
-stat$gene_type[stat$gene_type == "marker"] = "Genes contributing to joint variance"
-stat$gene_type[stat$gene_type == "not_marker"] = "Genes contributing to case variance"
-
-
-p = ggplot(stat , aes(x = frac_hoods_DA , y = frac_hoods_DE)) +
-  geom_point() + 
-  facet_wrap(~gene_type + reducedDim_name) + 
-  theme_bw() + 
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
-  labs(x = "# of altered genes contributing to joint variance" , y = "# of altered genes\ncontributing to case variance") 
-p
-ggsave(filename = paste0(figures.dir, "da_vs_de", ".png"), plot = p, width = 7, height = 7)
-
-
-
-```
-
-<!-- ## Genes split by their logFC -->
-
-<!-- ```{r get-milo-assign, message = FALSE} -->
-
-
-<!-- stat = as.data.frame(stat_combined_genes_split %>% group_by(n_hvgs , n_not_hvgs , reducedDim_name , gene_type , logFC_bulk) %>% dplyr::summarise(frac_hoods_DA = mean(frac_hoods_DA , na.rm = T) , frac_hoods_DE = mean(frac_hoods_DE , na.rm = T))) -->
-
-<!-- stat = stat[!is.na(stat$frac_hoods_DE) , ] -->
-
-<!-- stat$reducedDim_name[stat$reducedDim_name == "pca.hvgs"] = "Case-specific variance excluded" -->
-<!-- stat$reducedDim_name[stat$reducedDim_name == "pca.all"] = "Case-specific variance included" -->
-<!-- stat$gene_type[stat$gene_type == "marker"] = "Genes contributing to joint variance" -->
-<!-- stat$gene_type[stat$gene_type == "not_marker"] = "Genes contributing to case variance" -->
-
-<!-- p = ggplot(stat[stat$reducedDim_name == "Case-specific variance excluded" , ] , aes(x = factor(n_hvgs) , y = factor(n_not_hvgs) , fill = frac_hoods_DE)) + -->
-<!--   geom_tile() +  -->
-<!--   facet_wrap(~gene_type + logFC_bulk , ncol = ) +  -->
-<!--   scale_fill_viridis(discrete = F) + -->
-<!--   theme_bw() +  -->
-<!--   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +  -->
-<!--   labs(x = "# of altered genes contributing to joint variance" , y = "# of altered genes\ncontributing to case variance")  -->
-<!-- p -->
-
-
-<!-- ggsave(filename = paste0(figures.dir, "de_stat_genes_groupped", ".png"), plot = p, width = 10, height = 10) -->
-
-
-<!-- ``` -->
 
 
 
