@@ -33,15 +33,15 @@ set.seed(32)
 
 root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
 source(paste0(root.dir , "miloDE_analysis/core_functions.R"))
-figures.dir = paste0(root.dir , "figures/da_de/simulations_splatter/random/")
+figures.dir = paste0(root.dir , "figures/da_de/simulations_splatter/controlled/")
 
 # generated simulation data
-sces = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_random/sims.Rds"))
-simulated_genes = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_random/simulated_genes.Rds"))
-stat_da = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_random/stat_da.Rds"))
-stat_de = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_random/stat_de.Rds"))
+sces = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_controlled/sims.Rds"))
+simulated_genes = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_controlled/simulated_genes.Rds"))
+stat_da = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_controlled/stat_da.Rds"))
+stat_de = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_controlled/stat_de.Rds"))
 
-stat_combined = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_random/stat_combined_all_genes.Rds"))
+stat_combined = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_controlled/stat_combined_all_genes.Rds"))
 
 
 ```
@@ -129,7 +129,9 @@ ggsave(filename = paste0(figures.dir, "da/groupped_sim__fdr_001", ".png"), plot 
 
 
 
+
 ```
+
 
 ### Groupped by eveyrhting
 
@@ -192,7 +194,7 @@ get_plot = function(var , gene_type){
   p = ggplot(current.stat , aes(x = factor(n_markers) , y = factor(n_not_markers) , fill = current.stat[,var])) +
     geom_tile() + 
     facet_wrap(~reducedDim_name + round_sim + order_k , ncol = 12) + 
-    scale_fill_viridis(discrete = F , name = "Fraction of DE nhoods") +
+    scale_fill_viridis(discrete = F , name = "Fraction of DE nhoods" , option = "inferno") +
     theme_bw() + 
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
     labs(x = "# of altered genes contributing to joint variance" , y = "# of altered genes contributing to case variance") +
@@ -239,7 +241,7 @@ get_plot = function(var , gene_type){
   p = ggplot(current.stat , aes(x = factor(n_markers) , y = factor(n_not_markers) , fill = current.stat[,var])) +
     geom_tile() + 
     facet_wrap(~reducedDim_name + round_sim ) + 
-    scale_fill_viridis(discrete = F , name = "Fraction of DE nhoods") +
+    scale_fill_viridis(discrete = F , name = "Fraction of DE nhoods", option = "inferno") +
     theme_bw() + 
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
     labs(x = "# of altered genes contributing to joint variance" , y = "# of altered genes contributing to case variance") +
@@ -260,6 +262,8 @@ plots = lapply(1:nrow(anno) , function(i){
 
 
 ```
+
+
 
 ### Groupped by eveyrhting
 
@@ -282,7 +286,7 @@ get_plot = function(var , gene_type){
   p = ggplot(current.stat , aes(x = factor(n_markers) , y = factor(n_not_markers) , fill = current.stat[,var])) +
     geom_tile() + 
     facet_wrap(~reducedDim_name ) + 
-    scale_fill_viridis(discrete = F , name = "Fraction of DE nhoods" ) +
+    scale_fill_viridis(discrete = F , name = "Fraction of DE nhoods" , option = "inferno") +
     theme_bw() + 
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
     labs(x = "# of altered genes contributing to joint variance" , y = "# of altered genes\ncontributing to case variance") +
@@ -323,7 +327,7 @@ get_plot = function(var , gene_type){
   p = ggplot(current.stat , aes(x = factor(n_markers) , y = factor(n_not_markers) , fill = current.stat[,var])) +
     geom_tile() + 
     facet_wrap(~reducedDim_name + round_sim + order_k , ncol = 12) + 
-    scale_fill_viridis(discrete = F , name = "Fraction of DE nhoods\n(in not DA nhoods)") +
+    scale_fill_viridis(discrete = F , name = "Fraction of DE nhoods\n(in not DA nhoods)", option = "inferno") +
     theme_bw() + 
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
     labs(x = "# of altered genes contributing to joint variance" , y = "# of altered genes contributing to case variance") +
@@ -370,7 +374,7 @@ get_plot = function(var , gene_type){
   p = ggplot(current.stat , aes(x = factor(n_markers) , y = factor(n_not_markers) , fill = current.stat[,var])) +
     geom_tile() + 
     facet_wrap(~reducedDim_name + round_sim ) + 
-    scale_fill_viridis(discrete = F , name = "Fraction of DE nhoods\n(in not DA nhoods)") +
+    scale_fill_viridis(discrete = F , name = "Fraction of DE nhoods\n(in not DA nhoods)", option = "inferno") +
     theme_bw() + 
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
     labs(x = "# of altered genes contributing to joint variance" , y = "# of altered genes contributing to case variance") +
@@ -391,6 +395,7 @@ plots = lapply(1:nrow(anno) , function(i){
 
 
 ```
+
 
 ### Groupped by eveyrhting
 
@@ -413,7 +418,7 @@ get_plot = function(var , gene_type){
   p = ggplot(current.stat , aes(x = factor(n_markers) , y = factor(n_not_markers) , fill = current.stat[,var])) +
     geom_tile() + 
     facet_wrap(~reducedDim_name ) + 
-    scale_fill_viridis(discrete = F , name = "Fraction of DE nhoods" ) +
+    scale_fill_viridis(discrete = F , name = "Fraction of DE nhoods" , option = "inferno") +
     theme_bw() + 
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
     labs(x = "# of altered genes contributing to joint variance" , y = "# of altered genes\ncontributing to case variance") +
@@ -510,7 +515,7 @@ ggsave(filename = paste0(figures.dir, "umaps/all/" , names(sces)[id], ".png"), p
 ```{r umap-marker, message = FALSE}
 
 
-id = 25
+id = 31
 p = get_plot(id, "pca.hvgs")
 p
 ggsave(filename = paste0(figures.dir, "umaps/hvgs/" , names(sces)[id], ".png"), plot = p, width = 4, height = 5)
@@ -529,7 +534,7 @@ ggsave(filename = paste0(figures.dir, "umaps/all/" , names(sces)[id], ".png"), p
 ```{r umap-not-marker, message = FALSE}
 
 
-id = 361
+id = 331
 p = get_plot(id, "pca.hvgs")
 p
 ggsave(filename = paste0(figures.dir, "umaps/hvgs/" , names(sces)[id], ".png"), plot = p, width = 4, height = 5)
@@ -548,7 +553,7 @@ ggsave(filename = paste0(figures.dir, "umaps/all/" , names(sces)[id], ".png"), p
 ```{r umaps-both, message = FALSE}
 
 
-id = 385
+id = 358
 p = get_plot(id, "pca.hvgs")
 p
 ggsave(filename = paste0(figures.dir, "umaps/hvgs/" , names(sces)[id], ".png"), plot = p, width = 4, height = 5)
@@ -579,7 +584,7 @@ get_all_plots = function(round_sim , red_dim){
     p = get_plot(id , red_dim)
     return(p)
   }, BPPARAM = mcparam)
-  p = ggarrange(plotlist = plots , nrow = 12 , ncol = 12 , common.legend = T)
+  p = ggarrange(plotlist = plots , nrow = 11 , ncol = 11 , common.legend = T)
   return(p)
 }
 
@@ -588,7 +593,7 @@ anno = expand.grid(round_sim = c(1,2,3) , red_dim = c("all" , "hvgs"))
 
 plots = lapply(1:nrow(anno) , function(i){
   p = get_all_plots(as.numeric(as.character(anno$round_sim[i])) , red_dim = paste0("pca.", as.character(anno$red_dim[i])))
-  ggsave(filename = paste0(figures.dir, "umaps/" , as.character(anno$red_dim[i]), "/" , "all_" , as.character(anno$round_sim[i]), ".png"), plot = p, width = 17, height = 22)
+  ggsave(filename = paste0(figures.dir, "umaps/" , as.character(anno$red_dim[i]), "/" , "all_" , as.character(anno$round_sim[i]), ".png"), plot = p, width = 22, height = 24)
 })
 
 
