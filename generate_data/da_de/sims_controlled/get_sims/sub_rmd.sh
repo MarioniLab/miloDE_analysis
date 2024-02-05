@@ -10,10 +10,10 @@ script_name=sim_da_de
 
 #CHOOSE PARAMETERS
 #RAM in megabytes
-memory=500000
+memory=700000
 r_command="rusage[mem=${memory}]"
 #num_processors
-nproc=28
+nproc=42
 
 
 smg=/hps/software/users/marioni/alsu/singularity/alsu_miloDE.simg

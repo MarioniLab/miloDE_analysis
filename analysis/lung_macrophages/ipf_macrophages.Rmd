@@ -252,12 +252,8 @@ get_louvain_clustering = function(milo_de ,
 set.seed(32)
 louvain_clusters = get_louvain_clustering(milo_de)
 
-
-#genes_check = c("SPP1" , "CSF1" , "CTSK" , "FN1" , "SPARC" , "GPC4" , "MMP12"  , "IL1RN" , "IGHG1" , "CCL3" , "CCL4")
-
-#table(louvain_clusters$cluster)
-#louvain_clusters[louvain_clusters$gene %in% genes_check , ]
-
+# load
+louvain_clusters = readRDS(paste0(root.dir , "data/processed/lung_macrophages/louvain_clusters_per_hood" ,".Rds"))
 
 
 ```
@@ -557,6 +553,44 @@ p3 = ggplot(tab , aes(x = cluster_id , y = n , fill = bulk_sig_pval)) +
   theme(text=element_text(size=15) , axis.text.x = element_text(size=13) , axis.text.y = element_text(size=13))
 p3
 ggsave(filename = paste0(figures.dir, "de_per_hood/", "comp_w_bulk_pval" ,".png"), plot = p4, width = 2, height = 3)
+
+
+```
+
+## DE in bulk: lFC-bulk VS lfc-sig - colored by significance
+
+```{r de-ext, message = FALSE}
+
+
+cols_sig = met.brewer("Peru1" , n = 8)[c(1,6)]
+
+df = louvain_clusters
+df = df[order(df$bulk_sig_pval , decreasing = T) , ]
+df$cluster_id = sapply(df$cluster_id , function(x) str_replace(x , "_" , "-"))
+
+
+p = ggplot() +
+  geom_boxplot(data = df , aes(x = factor(cluster_id) , y = logFC_bulk) , outlier.shape = NA) +
+  geom_jitter(data = df , aes(x = factor(cluster_id) , y = logFC_bulk , color = bulk_sig_pval) , width = .25 , size = .75) +
+  theme_bw() + 
+  scale_color_manual(values = cols_sig , name = "Significant \nin bulk DE") + 
+  labs(x = "Gene set" , y = "logFC across all macrophages") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+p
+ggsave(filename = paste0(figures.dir, "de_per_hood/", "lfc_bulk_boxplot" ,".png"), plot = p, width = 4, height = 3)
+  
+
+p = ggplot(df , aes(x = logFC_sig , y = logFC_bulk , col = bulk_sig_pval)) + 
+  geom_point(size = .75) + 
+  theme_bw() + 
+  geom_abline(slope = 1 , color = "black" , "linetype" = "dashed") +
+  facet_wrap(~cluster_id) + 
+  scale_color_manual(values = cols_sig , name = "Significant \nin bulk DE") + 
+  labs(x = "avg logFC in significant nhoods" , y = "logFC across all macrophages")
+p
+ggsave(filename = paste0(figures.dir, "de_per_hood/", "lfc_bulk_scater" ,".png"), plot = p, width = 5, height = 4)
+
+
 
 
 ```

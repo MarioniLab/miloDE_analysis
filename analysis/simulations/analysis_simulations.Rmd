@@ -299,8 +299,10 @@ ggsave(filename = paste0(figures.dir, "performance__all", ".png"), plot = p, wid
 stat_reduced = stat
 stat_reduced$de_bulk_bool = stat_reduced$PValue_brain < 0.05
 
-cols_fill = c("papayawhip" , "peachpuff3")
-  
+cols_fill = c("gray30" , "white")
+
+cols = met.brewer("Egypt" , n = 4)[c(1,3,4)]  
+
 p1 = ggplot(stat_reduced , aes(x = factor(logFC_floorplate) , y = sensitivity , fill = de_bulk_bool , color = factor(k))) +
   geom_boxplot() + 
   theme_bw() + 
@@ -327,7 +329,7 @@ p2 = ggplot(stat_reduced , aes(x = factor(logFC_floorplate) , y = fdr , fill = d
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
 p = ggarrange(p1,p2, nrow = 2 , common.legend = T , legend = "right") 
 p
-ggsave(filename = paste0(figures.dir, "performance__all__extended", ".png"), plot = p, width = 9, height = 5)
+ggsave(filename = paste0(figures.dir, "performance__all__extended", ".png"), plot = p, width = 11, height = 5)
 
 
 

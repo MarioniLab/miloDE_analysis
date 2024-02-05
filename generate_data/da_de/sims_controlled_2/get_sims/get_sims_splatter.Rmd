@@ -107,7 +107,7 @@ genes_2_simulate = lapply(1:nrow(anno) , function(i){
   out$gene_type = c(rep("marker" , length(genes_hvg)) , rep("not_marker" , anno$n_not_markers[i]))
   out = merge(out , rowdata , all.x = T , all.y = F)
   out$range = ceiling(out$med_group_1 * (out$DEFacGroup2 - 1) * anno$effect_markers[i])
-  out$range[out$gene_type == "not_marker"] = ceiling(out$med_group_1[out$gene_type == "not_marker"]/2)
+  out$range[out$gene_type == "not_marker"] = ceiling(out$avg_group_1[out$gene_type == "not_marker"]*0.5)
   return(out)
 })
 names(genes_2_simulate) = anno$id

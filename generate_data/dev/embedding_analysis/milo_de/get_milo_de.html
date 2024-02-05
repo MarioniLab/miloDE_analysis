@@ -10,7 +10,7 @@
 
 
 
-<meta name="date" content="2023-05-04" />
+<meta name="date" content="2023-06-13" />
 
 <title>Assign neighbourhoods and miloDE for different embeddings.</title>
 
@@ -783,7 +783,7 @@ function toggle_visibility(id1) {
 
 
 <h1 class="title toc-ignore">Assign neighbourhoods and miloDE for different embeddings.</h1>
-<h4 class="date">4 May 2023</h4>
+<h4 class="date">13 June 2023</h4>
 
 </div>
 
@@ -824,73 +824,95 @@ rowdata = as.data.frame(rowData(sce))</code></pre>
 <div id="assign-neighbourhoods" class="section level1" number="2">
 <h1><span class="header-section-number">2</span> Assign neighbourhoods</h1>
 <p>We will not be saving this output since it is fairly easy to regenerate and saving it will occupy a lot of memory</p>
-<pre class="r"><code>anno_1 = expand.grid(reduced_dim = reducedDimNames(sce) , order = 1 , k = c(100,200) , round = c(1:3))
-anno_2 = expand.grid(reduced_dim = reducedDimNames(sce) , order = 2 , k = c(10,20) , round = c(1:3))
-anno = rbind(anno_1 , anno_2)
+<pre class="r"><code>anno = expand.grid(reduced_dim = reducedDimNames(sce) , order = 1 , k = 100 , round = c(1:5))
 anno$id = paste0(anno$reduced_dim , &quot;_&quot; , anno$order , &quot;_&quot; , anno$k , &quot;_&quot; , anno$round)
 
-# add seeds
-anno$seed = 13
-anno$seed[anno$round == 2] = 32
-anno$seed[anno$round == 3] = 98
-
-#subselect azimuth
-idx = which(gdata::startsWith(as.character(anno$reduced_dim) , &quot;azimuth&quot;))
-anno = anno[idx , ]
 
 sce_milo = lapply(1:nrow(anno) , function(i){
  set.seed(anno$seed[i])
  current.sce = miloDE::assign_neighbourhoods(sce , reducedDim_name = as.character(anno$reduced_dim[i]) , k = anno$k[i], prop = 0.1 , order = anno$order[i], filtering = T)
  return(current.sce)
 })</code></pre>
-<pre><code>## 100% covered by 497 sets.
+<pre><code>## 100% covered by 466 sets.
+## 100% covered by 451 sets.
+## 100% covered by 474 sets.
+## 100% covered by 469 sets.
+## 100% covered by 493 sets.
 ## 100% covered by 501 sets.
-## 100% covered by 455 sets.
-## 100% covered by 453 sets.
-## 100% covered by 250 sets.
-## 100% covered by 255 sets.
-## 100% covered by 238 sets.
-## 100% covered by 245 sets.
-## 100% covered by 490 sets.
-## 100% covered by 501 sets.
-## 100% covered by 448 sets.
-## 100% covered by 460 sets.
-## 100% covered by 249 sets.
-## 100% covered by 254 sets.
-## 100% covered by 233 sets.
-## 100% covered by 238 sets.
-## 100% covered by 495 sets.
-## 100% covered by 507 sets.
-## 100% covered by 448 sets.
 ## 100% covered by 459 sets.
-## 100% covered by 246 sets.
-## 100% covered by 259 sets.
-## 100% covered by 238 sets.
-## 100% covered by 237 sets.
-## 100% covered by 850 sets.
-## 100% covered by 842 sets.
-## 100% covered by 579 sets.
-## 100% covered by 573 sets.
-## 100% covered by 390 sets.
-## 100% covered by 393 sets.
-## 100% covered by 292 sets.
-## 100% covered by 275 sets.
-## 100% covered by 845 sets.
-## 100% covered by 842 sets.
-## 100% covered by 584 sets.
-## 100% covered by 581 sets.
-## 100% covered by 391 sets.
-## 100% covered by 396 sets.
-## 100% covered by 288 sets.
-## 100% covered by 277 sets.
-## 100% covered by 854 sets.
-## 100% covered by 852 sets.
-## 100% covered by 573 sets.
-## 100% covered by 583 sets.
-## 100% covered by 396 sets.
-## 100% covered by 399 sets.
-## 100% covered by 285 sets.
-## 100% covered by 282 sets.</code></pre>
+## 100% covered by 461 sets.
+## 100% covered by 628 sets.
+## 100% covered by 623 sets.
+## 100% covered by 527 sets.
+## 100% covered by 550 sets.
+## 100% covered by 612 sets.
+## 100% covered by 614 sets.
+## 100% covered by 528 sets.
+## 100% covered by 536 sets.
+## 100% covered by 451 sets.
+## 100% covered by 462 sets.
+## 100% covered by 474 sets.
+## 100% covered by 478 sets.
+## 100% covered by 493 sets.
+## 100% covered by 500 sets.
+## 100% covered by 441 sets.
+## 100% covered by 455 sets.
+## 100% covered by 614 sets.
+## 100% covered by 609 sets.
+## 100% covered by 535 sets.
+## 100% covered by 546 sets.
+## 100% covered by 603 sets.
+## 100% covered by 616 sets.
+## 100% covered by 537 sets.
+## 100% covered by 523 sets.
+## 100% covered by 451 sets.
+## 100% covered by 454 sets.
+## 100% covered by 481 sets.
+## 100% covered by 482 sets.
+## 100% covered by 497 sets.
+## 100% covered by 514 sets.
+## 100% covered by 447 sets.
+## 100% covered by 460 sets.
+## 100% covered by 618 sets.
+## 100% covered by 625 sets.
+## 100% covered by 532 sets.
+## 100% covered by 545 sets.
+## 100% covered by 599 sets.
+## 100% covered by 608 sets.
+## 100% covered by 528 sets.
+## 100% covered by 548 sets.
+## 100% covered by 466 sets.
+## 100% covered by 468 sets.
+## 100% covered by 476 sets.
+## 100% covered by 480 sets.
+## 100% covered by 499 sets.
+## 100% covered by 496 sets.
+## 100% covered by 449 sets.
+## 100% covered by 447 sets.
+## 100% covered by 608 sets.
+## 100% covered by 619 sets.
+## 100% covered by 538 sets.
+## 100% covered by 549 sets.
+## 100% covered by 608 sets.
+## 100% covered by 614 sets.
+## 100% covered by 534 sets.
+## 100% covered by 540 sets.
+## 100% covered by 452 sets.
+## 100% covered by 460 sets.
+## 100% covered by 475 sets.
+## 100% covered by 470 sets.
+## 100% covered by 487 sets.
+## 100% covered by 499 sets.
+## 100% covered by 449 sets.
+## 100% covered by 462 sets.
+## 100% covered by 616 sets.
+## 100% covered by 617 sets.
+## 100% covered by 534 sets.
+## 100% covered by 545 sets.
+## 100% covered by 596 sets.
+## 100% covered by 613 sets.
+## 100% covered by 530 sets.
+## 100% covered by 539 sets.</code></pre>
 <pre class="r"><code>names(sce_milo) = anno$id
 #saveRDS(sce_milo , file = paste0(root.dir , &quot;data/processed/embedding_analysis_updated/sce_milo.Rds&quot;))</code></pre>
 </div>
@@ -937,7 +959,7 @@ saveRDS(de_stat , paste0(root.dir , &quot;data/processed/embedding_analysis_upda
 <div id="session-info" class="section level1" number="4">
 <h1><span class="header-section-number">4</span> Session Info</h1>
 <pre class="r"><code>sessionInfo()</code></pre>
-<pre><code>## R version 4.2.2 (2022-10-31)
+<pre><code>## R version 4.2.3 (2023-03-15)
 ## Platform: x86_64-pc-linux-gnu (64-bit)
 ## Running under: Ubuntu 22.04.2 LTS
 ## 
@@ -967,13 +989,13 @@ saveRDS(de_stat , paste0(root.dir , &quot;data/processed/embedding_analysis_upda
 ## [13] Biobase_2.58.0               GenomicRanges_1.50.2        
 ## [15] GenomeInfoDb_1.34.9          IRanges_2.32.0              
 ## [17] S4Vectors_0.36.2             BiocGenerics_0.44.0         
-## [19] MatrixGenerics_1.11.1        matrixStats_0.63.0          
-## [21] BiocStyle_2.26.0             rmarkdown_2.20              
+## [19] MatrixGenerics_1.13.0        matrixStats_0.63.0          
+## [21] BiocStyle_2.26.0             rmarkdown_2.21              
 ## 
 ## loaded via a namespace (and not attached):
 ##   [1] utf8_1.2.3                    R.utils_2.12.2               
 ##   [3] tidyselect_1.2.0              AnnotationDbi_1.60.2         
-##   [5] RSQLite_2.3.0                 grid_4.2.2                   
+##   [5] RSQLite_2.3.1                 grid_4.2.3                   
 ##   [7] DropletUtils_1.18.1           munsell_0.5.0                
 ##   [9] ScaledMatrix_1.6.0            codetools_0.2-19             
 ##  [11] statmod_1.5.0                 future_1.32.0                
@@ -983,9 +1005,9 @@ saveRDS(de_stat , paste0(root.dir , &quot;data/processed/embedding_analysis_upda
 ##  [19] pbmcapply_1.5.1               listenv_0.9.0                
 ##  [21] GenomeInfoDbData_1.2.9        polyclip_1.10-4              
 ##  [23] bit64_4.0.5                   farver_2.1.1                 
-##  [25] rhdf5_2.42.0                  parallelly_1.34.0            
-##  [27] vctrs_0.5.2                   generics_0.1.3               
-##  [29] ipred_0.9-14                  xfun_0.37                    
+##  [25] rhdf5_2.42.1                  parallelly_1.35.0            
+##  [27] vctrs_0.6.2                   generics_0.1.3               
+##  [29] ipred_0.9-14                  xfun_0.38                    
 ##  [31] BiocFileCache_2.6.1           timechange_0.2.0             
 ##  [33] R6_2.5.1                      ggbeeswarm_0.7.1             
 ##  [35] graphlayouts_0.8.4            rsvd_1.0.5                   
@@ -995,67 +1017,67 @@ saveRDS(de_stat , paste0(root.dir , &quot;data/processed/embedding_analysis_upda
 ##  [43] BumpyMatrix_1.6.0             promises_1.2.0.1             
 ##  [45] scales_1.2.1                  ggraph_2.1.0                 
 ##  [47] nnet_7.3-18                   beeswarm_0.4.0               
-##  [49] gtable_0.3.1                  beachmat_2.14.0              
+##  [49] gtable_0.3.3                  beachmat_2.14.2              
 ##  [51] globals_0.16.2                tidygraph_1.2.3              
-##  [53] timeDate_4022.108             rlang_1.0.6                  
-##  [55] splines_4.2.2                 rstatix_0.7.2                
+##  [53] timeDate_4022.108             rlang_1.1.0                  
+##  [55] splines_4.2.3                 rstatix_0.7.2                
 ##  [57] yardstick_1.1.0               dichromat_2.0-0.1            
 ##  [59] broom_1.0.4                   BiocManager_1.30.20          
 ##  [61] yaml_2.3.7                    reshape2_1.4.4               
 ##  [63] abind_1.4-5                   backports_1.4.1              
-##  [65] httpuv_1.6.9                  tools_4.2.2                  
+##  [65] httpuv_1.6.9                  tools_4.2.3                  
 ##  [67] lava_1.7.2.1                  bookdown_0.33                
-##  [69] ggplot2_3.4.1                 Augur_1.0.3                  
+##  [69] ggplot2_3.4.2                 Augur_1.0.3                  
 ##  [71] ellipsis_0.3.2                jquerylib_0.1.4              
 ##  [73] RColorBrewer_1.1-3            Rcpp_1.0.10                  
-##  [75] parsnip_1.0.4                 plyr_1.8.8                   
+##  [75] parsnip_1.1.0                 plyr_1.8.8                   
 ##  [77] sparseMatrixStats_1.11.1      zlibbioc_1.44.0              
-##  [79] purrr_1.0.1                   RCurl_1.98-1.10              
+##  [79] purrr_1.0.1                   RCurl_1.98-1.12              
 ##  [81] ggpubr_0.6.0                  rpart_4.1.19                 
 ##  [83] viridis_0.6.2                 cowplot_1.1.1                
-##  [85] zoo_1.8-11                    cluster_2.1.4                
+##  [85] zoo_1.8-12                    cluster_2.1.4                
 ##  [87] ggrepel_0.9.3                 furrr_0.3.1                  
 ##  [89] magrittr_2.0.3                data.table_1.14.8            
 ##  [91] magick_2.7.4                  lmtest_0.9-40                
 ##  [93] xtable_1.8-4                  mime_0.12                    
 ##  [95] patchwork_1.1.2               evaluate_0.20                
-##  [97] gridExtra_2.3                 compiler_4.2.2               
-##  [99] tibble_3.2.0                  maps_3.4.1                   
+##  [97] gridExtra_2.3                 compiler_4.2.3               
+##  [99] tibble_3.2.1                  maps_3.4.1                   
 ## [101] crayon_1.5.2                  R.oo_1.25.0                  
-## [103] htmltools_0.5.4               later_1.3.0                  
+## [103] htmltools_0.5.5               later_1.3.0                  
 ## [105] tidyr_1.3.0                   lubridate_1.9.2              
 ## [107] DBI_1.1.3                     tweenr_2.0.2                 
-## [109] ExperimentHub_2.6.0           dbplyr_2.3.1                 
+## [109] ExperimentHub_2.6.0           dbplyr_2.3.2                 
 ## [111] rappdirs_0.3.3                MASS_7.3-58.3                
-## [113] Matrix_1.5-3                  car_3.1-1                    
-## [115] cli_3.6.0                     gdata_2.18.0.1               
-## [117] R.methodsS3_1.8.2             metapod_1.6.0                
-## [119] parallel_4.2.2                gower_1.0.1                  
-## [121] igraph_1.4.1                  pkgconfig_2.0.3              
-## [123] RcppGreedySetCover_0.1.0      recipes_1.0.5                
-## [125] vipor_0.4.5                   bslib_0.4.2                  
-## [127] hardhat_1.2.0                 dqrng_0.3.0                  
-## [129] XVector_0.38.0                prodlim_2019.11.13           
-## [131] digest_0.6.31                 Biostrings_2.66.0            
-## [133] DelayedMatrixStats_1.20.0     curl_5.0.0                   
-## [135] shiny_1.7.4                   gtools_3.9.4                 
-## [137] rjson_0.2.21                  lifecycle_1.0.3              
-## [139] jsonlite_1.8.4                Rhdf5lib_1.20.0              
-## [141] carData_3.0-5                 BiocNeighbors_1.16.0         
-## [143] mapproj_1.2.11                viridisLite_0.4.1            
-## [145] fansi_1.0.4                   pillar_1.8.1                 
-## [147] lattice_0.20-45               KEGGREST_1.38.0              
-## [149] httr_1.4.5                    fastmap_1.1.1                
-## [151] survival_3.5-5                interactiveDisplayBase_1.36.0
-## [153] glue_1.6.2                    png_0.1-8                    
-## [155] bluster_1.8.0                 BiocVersion_3.16.0           
-## [157] bit_4.0.5                     ggforce_0.4.1                
-## [159] class_7.3-21                  stringi_1.7.12               
-## [161] sass_0.4.5                    HDF5Array_1.26.0             
-## [163] blob_1.2.3                    rsample_1.1.1                
-## [165] BiocSingular_1.14.0           AnnotationHub_3.6.0          
-## [167] memoise_2.0.1                 dplyr_1.1.0                  
-## [169] irlba_2.3.5.1                 future.apply_1.10.0</code></pre>
+## [113] Matrix_1.5-4                  car_3.1-2                    
+## [115] cli_3.6.1                     R.methodsS3_1.8.2            
+## [117] metapod_1.6.0                 parallel_4.2.3               
+## [119] gower_1.0.1                   igraph_1.4.2                 
+## [121] pkgconfig_2.0.3               RcppGreedySetCover_0.1.0     
+## [123] recipes_1.0.5                 vipor_0.4.5                  
+## [125] bslib_0.4.2                   hardhat_1.3.0                
+## [127] dqrng_0.3.0                   XVector_0.38.0               
+## [129] prodlim_2023.03.31            digest_0.6.31                
+## [131] Biostrings_2.66.0             DelayedMatrixStats_1.20.0    
+## [133] curl_5.0.0                    shiny_1.7.4                  
+## [135] gtools_3.9.4                  rjson_0.2.21                 
+## [137] lifecycle_1.0.3               jsonlite_1.8.4               
+## [139] Rhdf5lib_1.20.0               carData_3.0-5                
+## [141] BiocNeighbors_1.16.0          mapproj_1.2.11               
+## [143] viridisLite_0.4.1             fansi_1.0.4                  
+## [145] pillar_1.9.0                  lattice_0.21-8               
+## [147] KEGGREST_1.38.0               httr_1.4.5                   
+## [149] fastmap_1.1.1                 survival_3.5-5               
+## [151] interactiveDisplayBase_1.36.0 glue_1.6.2                   
+## [153] png_0.1-8                     bluster_1.8.0                
+## [155] BiocVersion_3.16.0            bit_4.0.5                    
+## [157] ggforce_0.4.1                 class_7.3-21                 
+## [159] stringi_1.7.12                sass_0.4.5                   
+## [161] HDF5Array_1.26.0              blob_1.2.4                   
+## [163] rsample_1.1.1                 BiocSingular_1.14.0          
+## [165] AnnotationHub_3.6.0           memoise_2.0.1                
+## [167] dplyr_1.1.1                   irlba_2.3.5.1                
+## [169] future.apply_1.10.0</code></pre>
 </div>
 
 

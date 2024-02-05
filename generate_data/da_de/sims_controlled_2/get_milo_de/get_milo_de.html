@@ -10,7 +10,7 @@
 
 
 
-<meta name="date" content="2023-06-02" />
+<meta name="date" content="2023-06-12" />
 
 <title>This pipeline to get DA statistic for DA-DE analysis</title>
 
@@ -783,7 +783,7 @@ function toggle_visibility(id1) {
 
 
 <h1 class="title toc-ignore">This pipeline to get DA statistic for DA-DE analysis</h1>
-<h4 class="date">2 June 2023</h4>
+<h4 class="date">12 June 2023</h4>
 
 </div>
 
@@ -808,7 +808,7 @@ library(miloDE)
 library(stringr)
 library(dplyr)
 
-ncores = 42
+ncores = 46
 mcparam = MulticoreParam(workers = ncores)
 register(mcparam)
 set.seed(32)
@@ -817,12 +817,13 @@ root.dir = &quot;/nfs/research/marioni/alsu/hubmap_metaRef/&quot;
 source(paste0(root.dir , &quot;miloDE_analysis/core_functions.R&quot;))
 
 
-sims = readRDS(file = paste0(root.dir , &quot;data/processed/da_de/simulations_controlled/sims.Rds&quot;))
-simulated_genes = readRDS(paste0(root.dir , &quot;data/processed/da_de/simulations_controlled/simulated_genes.Rds&quot;))
+sims = readRDS(file = paste0(root.dir , &quot;data/processed/da_de/simulations_controlled_2/sims.Rds&quot;))
+simulated_genes = readRDS(paste0(root.dir , &quot;data/processed/da_de/simulations_controlled_2/simulated_genes.Rds&quot;))
 
-anno_1 = expand.grid(order = 1 , k = c(100,200) , seed = c(13,17,32))
-anno_2 = expand.grid(order = 2 , k = c(10,20) , seed = c(13,17,32))
-anno = rbind(anno_1 , anno_2)
+#anno_1 = expand.grid(order = 1 , k = c(100,200) , seed = c(13,17,32))
+#anno_2 = expand.grid(order = 2 , k = c(10,20) , seed = c(13,17,32))
+#anno = rbind(anno_1 , anno_2)
+anno = expand.grid(order = 1 , k = c(100) , seed = c(13,17,32))
 anno$id_nhood_assignment = paste0(anno$order , &quot;_&quot; , anno$k , &quot;_&quot; , anno$seed)</code></pre>
 </div>
 <div id="get-milo-de-stat" class="section level1" number="2">
@@ -918,8 +919,8 @@ stat = bplapply(1:length(sims) , function(j){
     id = stringr::str_split(id , &quot;_&quot;)
     id = id[[1]]
     stat_per_sim$round_sim = as.numeric(id[1])
-    stat_per_sim$n_markers = as.numeric(id[4])
-    stat_per_sim$n_not_markers = as.numeric(id[9])
+    stat_per_sim$effect_size = as.numeric(id[3])
+    stat_per_sim$n_not_markers = as.numeric(id[8])
   }
   else {
     stat_per_sim = NULL
@@ -927,7 +928,7 @@ stat = bplapply(1:length(sims) , function(j){
   return(stat_per_sim)
 } , BPPARAM = mcparam)
 stat = do.call(rbind , stat)
-saveRDS(stat , file = paste0(root.dir , &quot;data/processed/da_de/simulations_controlled/stat_de.Rds&quot;))</code></pre>
+saveRDS(stat , file = paste0(root.dir , &quot;data/processed/da_de/simulations_controlled_2/stat_de.Rds&quot;))</code></pre>
 </div>
 <div id="session-info" class="section level1" number="3">
 <h1><span class="header-section-number">3</span> Session Info</h1>

@@ -15,7 +15,7 @@ library(BiocParallel)
 library(geneBasisR)
 library(splatter)
 library(scran)
-ncores = 28
+ncores = 42
 mcparam = MulticoreParam(workers = ncores)
 register(mcparam)
 set.seed(32)
@@ -69,10 +69,13 @@ sim = sim[genes_to_keep , ]
 
 # re-do rowdata
 rowdata = as.data.frame(rowData(sim))
-rowdata = rowdata[, c("Gene" , "BaseGeneMean" , "DEFacGroup2")]
-rowdata$avg_group_1 = rowMedians(as.matrix(counts(sim[,sim$Group == "Group1"])))
-rowdata$avg_group_2 = rowMedians(as.matrix(counts(sim[,sim$Group == "Group2"])))
-rowdata$diff = rowdata$avg_group_2 - rowdata$avg_group_1
+rowdata$avg_group_1 = rowMeans(counts(sim[,sim$Group == "Group1"]))
+rowdata$avg_group_2 = rowMeans(counts(sim[,sim$Group == "Group2"]))
+rowdata$avg_diff = rowdata$avg_group_2 - rowdata$avg_group_1
+
+rowdata$med_group_1 = rowMedians(as.matrix( counts(sim[,sim$Group == "Group1"])) )
+rowdata$med_group_2 = rowMedians(as.matrix( counts(sim[,sim$Group == "Group2"])) )
+rowdata$med_diff = rowdata$med_group_2 - rowdata$med_group_1
 
 
 genes_hvg = rowdata$Gene[!rowdata$DEFacGroup2 == 1]
@@ -97,8 +100,8 @@ genes_2_simulate = lapply(1:nrow(anno) , function(i){
   out = data.frame(Gene = c(sample(rowdata$Gene[!rowdata$DEFacGroup2 == 1] , anno$n_markers[i]) , sample(rowdata$Gene[rowdata$DEFacGroup2 == 1] , anno$n_not_markers[i])))
   out$gene_type = c(rep("marker" , anno$n_markers[i]) , rep("not_marker" , anno$n_not_markers[i]))
   out = merge(out , rowdata , all.x = T , all.y = F)
-  out$range = ceiling(out$avg_group_1 * (out$DEFacGroup2 - 1))
-  out$range[out$gene_type == "not_marker"] = ceiling(out$avg_group_1[out$gene_type == "not_marker"]/2)
+  out$range = ceiling(out$med_group_1 * (out$DEFacGroup2 - 1))
+  out$range[out$gene_type == "not_marker"] = ceiling(out$avg_group_1[out$gene_type == "not_marker"]*0.5)
   return(out)
 })
 names(genes_2_simulate) = anno$id

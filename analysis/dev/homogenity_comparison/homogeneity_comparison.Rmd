@@ -1,5 +1,5 @@
 ---
-title: "This pipeline to test different embedding strategies"
+title: "This pipeline to test different how homogeneity varies between miloDE and bulk"
 output:
   BiocStyle::html_document:
     code_folding: hide
@@ -29,196 +29,67 @@ set.seed(32)
 
 
 root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
-figures.dir = paste0(root.dir , "figures/optimal_coverage/embedding_updated/")
+figures.dir = paste0(root.dir , "figures/homogeneity_comparison/")
 
 
 # load sce with embedding
 sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/mouse_embryo_wt_chimera.Rds"))
-rowdata = as.data.frame(rowData(sce))
+# subset
+sce = sce[, sce$type == "wt" & sce$celltype == "Forebrain/Midbrain/Hindbrain"]
 
-# load genes
-genes_wt = read.csv(paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/HVGs/wt.csv") , row.names = 1)
-genes_all = read.csv(paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/HVGs/all.csv") , row.names = 1)
-genes = list(all = genes_all$HVG , wt = genes_wt$HVG)
-
-
-chimera_speicific_genes = c("Rpgrip1" , "Slc24a5" , "Cbx3" , "Actb")
-chimera_speicific_stat = data.frame(SYMBOL = chimera_speicific_genes)
-chimera_speicific_stat = merge(chimera_speicific_stat , rowdata , all.x = T , all.y = F)
-chimera_speicific_stat$gene_in_wt = chimera_speicific_stat$ENSEMBL %in% genes$wt
-chimera_speicific_stat$gene_in_all = chimera_speicific_stat$ENSEMBL %in% genes$all
-chimera_speicific_stat$SYMBOL = factor(chimera_speicific_stat$SYMBOL , levels = chimera_speicific_genes)
-
-sce_milo_nhoods = readRDS(paste0(root.dir , "data/processed/embedding_analysis_updated/sce_milo_nhoods.Rds"))
-
-stat = readRDS(paste0(root.dir , "data/temp/embedding_homogeneity_stat.Rds"))
-
-
-```
-
-# UMAPs, colored by CT
-
-```{r umaps-by-ct, message = FALSE}
-
-
-
-get_umap_plot = function(sce , reducedDim.name){
-  set.seed(32)
-  umaps = as.data.frame( scater::calculateUMAP(t(reducedDim(sce , reducedDim.name))) )
-  umaps = cbind(umaps , as.data.frame(colData(sce)))
-  umaps$type = factor(umaps$type , levels = c("wt" , "chimera"))
-  p = ggplot(umaps , aes(x = V1 , y = V2 , col = celltype)) + 
-    geom_point(size=0.5) + 
-    theme_bw() + 
-    theme(legend.position = "none") + 
-    scale_color_manual(values = EmbryoCelltypeColours) + 
-    ggtitle(reducedDim.name) +
-    facet_wrap(~type , nrow = 2) +
-    labs(x = "" , y = "") 
-  return(p)
-}
-
-
-anno_mnn = expand.grid(type = c("supervised" , "unsupervised") , genes = c("wt", "all") , method = c("mnn") )
-anno_azimuth = expand.grid(type = c("supervised" , "unsupervised") , genes = c("wt", "all") , method = c("azimuth" ))
-anno_rest = expand.grid(type = c("supervised" , "unsupervised") , genes = c("wt", "all") , method = c( "scvi" , "scanvi"))
-anno = rbind(anno_azimuth , anno_rest , anno_mnn)
-anno$reducedDim.name = paste0(anno$method , "_" , anno$type , "_" , anno$genes)
-
-plots = lapply(1:nrow(anno), function(i){
-  reducedDim.name = anno$reducedDim.name[i]
-  p = get_umap_plot(sce , reducedDim.name)
-  return(p)
-})
-p = ggarrange(plotlist = plots , common.legend = F , ncol = 4 , nrow = 4)
-p
-ggsave(filename = paste0(figures.dir, "umaps_by_ct", ".png"), plot = p, width = 10, height = 15)
-
-
-
-```
-
-@@ Add mapping
-
-# Select chimera-specific genes for testing
-
-```{r check-chimera-genes, message = FALSE}
-
-
-
-get_de_genes_bulk = function(sce , celltype = NULL){
-  require(tibble)
-  require(edgeR)
-  if (!is.null(celltype)){
-    sce = sce[ , sce$celltype == celltype]
-  }
+# add pca to sce
+sce = add_batch_corrected_pca(sce, genes = NULL, reduced.dim_name = "pca.brain" , batch = "sample" , d = 5, bpparam = NULL , correct = T , add_umaps = T)
   
-  stat = tryCatch(
-    {
-      summed = summarizeAssayByGroup(counts(sce), colData(sce)[,c("sample","type")])
-      y <- DGEList(assay(summed, "sum"), samples=colData(summed), lib.size = colSums(assay(summed , "sum")))
-      keep <- filterByExpr(y, group=summed$sample , min.count = 2 , min.total.count = 4)
-      y <- y[keep,]
-      y <- calcNormFactors(y)
-      design <- model.matrix(~ factor(type), y$samples)
-      y <- estimateDisp(y, design)
-      fit <- glmQLFit(y, design, robust=TRUE)
-      res <- glmQLFTest(fit, coef=ncol(design))
-      out = topTags(res, n = Inf )
-      out = as.data.frame(out)
-      out = rownames_to_column(out , var = "ENSEMBL")
-      out = merge(out , rowdata , all.x = T , all.y = F)
-      if (!is.null(celltype)){
-        out$celltype = celltype
-      }
-      out
-    }, 
-    error = function(dummy){
-      return(NULL)
-    }
-  )
-  return(stat)
-}      
+
+# select good genes
+rowdata = as.data.frame(rowData(sce))
+rownames(sce) = rowdata$SYMBOL
+genes = c("En1" , "Fgf8" , "Msx3" , "Wnt1" , "Efna2" , "Fgf17" , "Otx2" , "Shh" , "Foxa2" , "Lmo1")
+sce = sce[genes, ]
 
 
 
-de_stat_bulk = lapply(unique(sce$celltype) , function(celltype){
-  print(celltype)
-  out = get_de_genes_bulk(sce , celltype)
+
+```
+
+# Assign neighbourhoods
+
+```{r assign-hoods, message = FALSE}
+
+
+anno_1 = expand.grid(order = 1 , k = c(25 , 50) , seed = c(13))
+anno_2 = expand.grid(order = 2 , k = c(10, 15) , seed = c(13))
+anno = rbind(anno_1 , anno_2)
+anno$id_nhood_assignment = paste0(anno$order , "_" , anno$k , "_" , anno$seed)
+
+
+sce_milo = lapply(1:nrow(anno), function(i){
+  
+  out = miloDE::assign_neighbourhoods(sce , reducedDim_name = "pca.brain" , order = anno$order[i] , k = anno$k[i] , d = 5 , verbose = F , filtering = T)
   return(out)
 })
-de_stat_bulk = do.call(rbind , de_stat_bulk)
-
-# get celltype composition
-tab = as.data.frame(table(sce$celltype))
-colnames(tab) = c("celltype" , "n")
-tab$n = tab$n/sum(tab$n)
-
-de_stat_bulk = merge(de_stat_bulk , tab , all.x = T , all.y = F)
-# add normalised celltype composition
-de_stat_bulk$n_norm = de_stat_bulk$n
-de_stat_bulk$n_norm[de_stat_bulk$PValue >= 0.01] = 0
-   
-
-
-
-de_stat_per_gene = as.data.frame(de_stat_bulk %>% group_by(ENSEMBL , SYMBOL) %>% dplyr::summarise(median_pval = median(PValue , na.rm = T) , median_logFC = median(logFC , na.rm = T) , mean_logFC = mean(logFC , na.rm = T) , frac_cts_sig = mean(FDR < 0.05 , na.rm = T) , 
-                                                                                                  weight_cts_sig = sum(n_norm)))
-de_stat_per_gene = de_stat_per_gene[de_stat_per_gene$SYMBOL %in% as.character(chimera_speicific_stat$SYMBOL) , ]
-
-
-# add DE using all
-de_stat_all = get_de_genes_bulk(sce)
-de_stat_all = de_stat_all[de_stat_all$ENSEMBL %in% chimera_speicific_stat$ENSEMBL , c("ENSEMBL" , "logFC")]
-colnames(de_stat_all) = c("ENSEMBL" , "logFC_all")
-
-de_stat_per_gene = merge(de_stat_per_gene , de_stat_all)
-
-
-```
-
-## Boxplot w/ counts
-
-```{r boxplot-w-chimera-specific-counts, message = FALSE}
-
-
-cols = wesanderson::wes_palette("Royal1" , 2)
-names(cols) = c("wt" , "chimera")
-get_boxplot_per_gene = function(gene){
-  df = data.frame(cell = sce$cell , sample = sce$sample , type = sce$type , 
-                  counts = as.numeric(logcounts(sce[rowdata$ENSEMBL[rowdata$SYMBOL == gene] , ])))
-  df = df[order(df$counts) , ]
-  df$type = factor(df$type , levels = c("wt" , "chimera"))
-  p = ggplot(df , aes(x = type , y = counts , fill = type)) + 
-    geom_boxplot(alpha = .9) + 
-    theme_bw() + 
-    theme(legend.position = "right") + 
-    scale_fill_manual(values = cols , name = "Condition") +
-    ggtitle(gene ) +
-    theme(axis.text.x = element_blank()) +
-    labs(x = "" , y = "logcounts") 
-    #theme(legend.text=element_text(size=15) , legend.title=element_text(size=20))
-  return(p)
-}
-
-
-
-plots = lapply(levels(chimera_speicific_stat$SYMBOL) , function(gene){
-  p = get_boxplot_per_gene(gene)
-  print(p)
-})
-p = ggarrange(plotlist = plots , common.legend = T , ncol = length(chimera_speicific_stat$SYMBOL) , legend = "right")
-p
-ggsave(filename = paste0(figures.dir, "boxplot_w_chimera_genes_counts", ".png"), plot = p, width = 9, height = 2)
+names(sce_milo) = anno$id 
 
 
 
 ```
 
+# Calc mean and sd
 
-# Neighbourhood homogeneity
+## Bulk - all cells
 
-## Get homogeneity stat
+
+```{r calc-stat-bulk, message = FALSE}
+
+
+stat_all = data.frame(gene = rownames(sce) , mean_all = rowMeans(logcounts(sce), na.rm=TRUE) , sd_all = rowSds(logcounts(sce), na.rm=TRUE))
+
+
+```
+
+
+## For each nhood assignment
+
 
 ```{r stat-heterogeneity-hoods, message = FALSE}
 
@@ -226,42 +97,33 @@ ggsave(filename = paste0(figures.dir, "boxplot_w_chimera_genes_counts", ".png"),
 
 get_mean_sd_distr_per_hood = function(idx_milo , gene){
   df = data.frame(cell = colnames(sce) , 
-                            sample = sce$sample,
-                            type = sce$type , 
-                            counts = as.numeric(logcounts(sce[rowdata$ENSEMBL[rowdata$SYMBOL == as.character(gene)] , ])))
-  nhoods_sce = sce_milo_nhoods[[idx_milo]]
-  stat = lapply(1:ncol(nhoods_sce) , function(i){
+                            counts = as.numeric(logcounts(sce[gene , ])))
+  nhoods_sce = nhoods(sce_milo[[idx_milo]])
+  
+  stat = bplapply(1:ncol(nhoods_sce) , function(i){
     idx = which(nhoods_sce[,i] == 1 )
     current.df = df[df$cell %in% rownames(nhoods_sce)[idx],]
-    current.stat = as.data.frame(current.df %>% group_by(type) %>% dplyr::summarise(mean = mean(counts) , sd = sd(counts)))
+    current.stat = data.frame(mean_hood = mean(current.df$counts) , sd_hood = sd(current.df$counts))
     current.stat$Nhood = i
     return(current.stat)
-  })
+  }, BPPARAM = mcparam)
   stat = do.call(rbind , stat)
-  id = names(sce_milo_nhoods)[idx_milo]
+  id = names(sce_milo)[idx_milo]
   stat$id = id
-  id = stringr::str_split(id , pattern = "_")
-  id = id[[1]]
-  stat$reduced_dim_method = id[1]
-  stat$reduced_dim_type = id[2]
-  stat$reduced_dim_genes = id[3]
-  stat$reduced_dim = paste0(id[1] , "_" , id[2] , "_" , id[3])
-  stat$order = as.numeric(id[4])
-  stat$k = as.numeric(id[5])
-  stat$round = as.numeric(id[6])
+  stat$gene = gene
   return(stat)
 }
 
-anno = expand.grid(gene = chimera_speicific_stat$SYMBOL , idx_milo = c(1:length(sce_milo_nhoods)))
-stat = bplapply(1:nrow(anno) , function(i){
-  out = get_mean_sd_distr_per_hood(anno$idx_milo[i] , as.character(anno$gene[i]))
-  out$gene = as.character(anno$gene[i])
+
+
+anno_hoods = expand.grid(gene = rownames(sce) , idx_milo = c(1:length(sce_milo)))
+stat_nhoods = lapply(1:nrow(anno_hoods) , function(i){
+  out = get_mean_sd_distr_per_hood(anno_hoods$idx_milo[i] , as.character(anno_hoods$gene[i]))
   return(out)
-} , BPPARAM = mcparam)
-stat = do.call(rbind , stat)
-stat = stat[order(stat$mean) , ]
-stat$type = factor(stat$type , levels = c("wt" , "chimera"))
-saveRDS(stat , paste0(root.dir , "data/temp/embedding_homogeneity_stat.Rds"))
+})
+stat_nhoods = do.call(rbind , stat_nhoods)
+
+saveRDS(stat_nhoods , paste0(root.dir , "data/temp/homogeneity_comparison_stat.Rds"))
 
 
 
@@ -273,31 +135,19 @@ saveRDS(stat , paste0(root.dir , "data/temp/embedding_homogeneity_stat.Rds"))
 ```{r plot-sd-boxplot, message = FALSE}
 
 
-stat = readRDS(paste0(root.dir , "data/temp/embedding_homogeneity_stat.Rds"))
-current.stat = stat[stat$reduced_dim %in% anno$reducedDim.name,]
-current.stat$reduced_dim = factor(current.stat$reduced_dim , levels = anno$reducedDim.name)
-current.stat$reduced_dim_type_genes = paste0(current.stat$reduced_dim_type , "_" , current.stat$reduced_dim_genes)
-current.stat$reduced_dim_type_genes = factor(current.stat$reduced_dim_type_genes , levels = c("unsupervised_wt" , "unsupervised_all" , "supervised_wt" , "supervised_all"))
-
-
-cols = c( "paleturquoise4" , "paleturquoise2" , "rosybrown4" , "rosybrown1" )
-
-
-plots = lapply(levels(chimera_speicific_stat$SYMBOL) , function(gene){
-  p = ggplot(current.stat[current.stat$gene == gene & current.stat$type == "chimera", ] , aes(x = reduced_dim_method , y = sd , fill = reduced_dim_type_genes)) + 
-    geom_boxplot(outlier.size= .25) + 
-    facet_wrap(~gene ) + 
-    theme_bw() +
-    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
-    labs(x = "" , y = "")  +
-    scale_fill_manual(values = cols, name = "Embedding") 
+plots = lapply(genes , function(gene){
+  current.stat_nhoods = stat_nhoods[stat_nhoods$gene == gene , ]
+  current.stat_all = stat_all[stat_all$gene == gene , ]
+  p = ggplot() +
+    geom_point(data = current.stat_nhoods , aes(x = mean_hood , y = sd_hood , col = id) , size = .5) +
+    geom_point(data = current.stat_all , aes(x = mean_all , y = sd_all),  col = "black" , size = 2) +
+    theme_bw() + 
+    ggtitle(gene) 
   return(p)
-  #ggsave(filename = paste0(figures.dir, "sd_distr/", gene, ".png"), plot = p, width = 7, height = 4)
 })
-p = ggarrange(plotlist = plots , common.legend = T , ncol = length(levels(chimera_speicific_stat$SYMBOL)) , nrow = 1)
+p = ggarrange(plotlist = plots , common.legend = T)
 p
-
-ggsave(filename = paste0(figures.dir, "sd_distr", ".png"), plot = p, width = 12, height = 3)
+ggsave(filename = paste0(figures.dir, "stat", ".png"), plot = p, width = 8, height = 6)
 
 
 ```

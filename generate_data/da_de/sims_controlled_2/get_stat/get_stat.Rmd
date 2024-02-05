@@ -30,10 +30,10 @@ source(paste0(root.dir , "miloDE_analysis/core_functions.R"))
 
 
 # generated simulation data
-sces = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_controlled/sims.Rds"))
-simulated_genes = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_controlled/simulated_genes.Rds"))
-stat_da = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_controlled/stat_da.Rds"))
-stat_de = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_controlled/stat_de.Rds"))
+sces = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_controlled_2/sims.Rds"))
+simulated_genes = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_controlled_2/simulated_genes.Rds"))
+stat_da = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_controlled_2/stat_da.Rds"))
+stat_de = readRDS(file = paste0(root.dir , "data/processed/da_de/simulations_controlled_2/stat_de.Rds"))
 
 
 ```
@@ -100,9 +100,9 @@ stat = bplapply(1:nrow(anno_sims) , function(i){
   return(out)
 } , BPPARAM = mcparam)
 stat = do.call(rbind , stat)
-stat = merge(stat , unique(stat_da[, c("id_sim" , "n_markers" , "n_not_markers", "round_sim" , "order" , "k" , "seed" , "id_nhood_assignment" , "reducedDim_name")]) , by = c("id_sim" , "id_nhood_assignment" , "reducedDim_name") , all.x = T , all.y = F)
+stat = merge(stat , unique(stat_da[, c("id_sim" , "effect_size" , "n_not_markers", "round_sim" , "order" , "k" , "seed" , "id_nhood_assignment" , "reducedDim_name")]) , by = c("id_sim" , "id_nhood_assignment" , "reducedDim_name") , all.x = T , all.y = F)
 
-saveRDS(stat , file = paste0(root.dir , "data/processed/da_de/simulations_controlled/stat_combined_all_genes.Rds"))
+saveRDS(stat , file = paste0(root.dir , "data/processed/da_de/simulations_controlled_2/stat_combined_all_genes.Rds"))
 
 
 ```

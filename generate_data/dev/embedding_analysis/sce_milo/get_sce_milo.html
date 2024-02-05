@@ -10,7 +10,7 @@
 
 
 
-<meta name="date" content="2023-05-04" />
+<meta name="date" content="2023-06-13" />
 
 <title>Assign neighbourhoods and miloDE for different embeddings.</title>
 
@@ -783,7 +783,7 @@ function toggle_visibility(id1) {
 
 
 <h1 class="title toc-ignore">Assign neighbourhoods and miloDE for different embeddings.</h1>
-<h4 class="date">4 May 2023</h4>
+<h4 class="date">13 June 2023</h4>
 
 </div>
 
@@ -821,220 +821,101 @@ sce = readRDS(paste0(root.dir , &quot;data/sces/mouse_embryo/chimera_WT/mouse_em
 </div>
 <div id="assign-neighbourhoods" class="section level1" number="2">
 <h1><span class="header-section-number">2</span> Assign neighbourhoods</h1>
-<pre class="r"><code>anno_1 = expand.grid(reduced_dim = reducedDimNames(sce) , order = 1 , k = c(100,200) , round = c(1:3))
-anno_2 = expand.grid(reduced_dim = reducedDimNames(sce) , order = 2 , k = c(10,20) , round = c(1:3))
-anno = rbind(anno_1 , anno_2)
+<pre class="r"><code>anno = expand.grid(reduced_dim = reducedDimNames(sce) , order = 1 , k = 100 , round = c(1:5))
 anno$id = paste0(anno$reduced_dim , &quot;_&quot; , anno$order , &quot;_&quot; , anno$k , &quot;_&quot; , anno$round)
 
-# add seeds
-anno$seed = 13
-anno$seed[anno$round == 2] = 32
-anno$seed[anno$round == 3] = 98
-
 sce_milo = lapply(1:nrow(anno) , function(i){
- set.seed(anno$seed[i])
+ set.seed(anno$round[i])
  current.sce = miloDE::assign_neighbourhoods(sce , reducedDim_name = as.character(anno$reduced_dim[i]) , k = anno$k[i], prop = 0.1 , order = anno$order[i], filtering = T)
  return(nhoods(current.sce))
 })</code></pre>
-<pre><code>## 100% covered by 455 sets.
-## 100% covered by 462 sets.
-## 100% covered by 470 sets.
-## 100% covered by 481 sets.
-## 100% covered by 497 sets.
-## 100% covered by 501 sets.
-## 100% covered by 455 sets.
-## 100% covered by 453 sets.
-## 100% covered by 620 sets.
-## 100% covered by 622 sets.
-## 100% covered by 524 sets.
-## 100% covered by 538 sets.
-## 100% covered by 604 sets.
-## 100% covered by 605 sets.
-## 100% covered by 534 sets.
-## 100% covered by 546 sets.
-## 100% covered by 230 sets.
-## 100% covered by 230 sets.
-## 100% covered by 236 sets.
-## 100% covered by 245 sets.
-## 100% covered by 250 sets.
-## 100% covered by 255 sets.
-## 100% covered by 238 sets.
-## 100% covered by 245 sets.
-## 100% covered by 316 sets.
-## 100% covered by 311 sets.
-## 100% covered by 261 sets.
-## 100% covered by 269 sets.
-## 100% covered by 310 sets.
-## 100% covered by 299 sets.
-## 100% covered by 264 sets.
-## 100% covered by 272 sets.
-## 100% covered by 459 sets.
+<pre><code>## 100% covered by 460 sets.
 ## 100% covered by 456 sets.
+## 100% covered by 486 sets.
+## 100% covered by 478 sets.
+## 100% covered by 485 sets.
+## 100% covered by 506 sets.
+## 100% covered by 447 sets.
+## 100% covered by 457 sets.
+## 100% covered by 623 sets.
+## 100% covered by 624 sets.
+## 100% covered by 538 sets.
+## 100% covered by 552 sets.
+## 100% covered by 612 sets.
+## 100% covered by 606 sets.
+## 100% covered by 528 sets.
+## 100% covered by 541 sets.
+## 100% covered by 466 sets.
 ## 100% covered by 468 sets.
 ## 100% covered by 484 sets.
-## 100% covered by 490 sets.
-## 100% covered by 501 sets.
+## 100% covered by 482 sets.
+## 100% covered by 500 sets.
+## 100% covered by 500 sets.
 ## 100% covered by 448 sets.
-## 100% covered by 460 sets.
-## 100% covered by 616 sets.
-## 100% covered by 624 sets.
-## 100% covered by 533 sets.
-## 100% covered by 544 sets.
-## 100% covered by 611 sets.
-## 100% covered by 604 sets.
-## 100% covered by 530 sets.
+## 100% covered by 451 sets.
+## 100% covered by 620 sets.
+## 100% covered by 613 sets.
+## 100% covered by 531 sets.
 ## 100% covered by 542 sets.
-## 100% covered by 227 sets.
-## 100% covered by 229 sets.
-## 100% covered by 247 sets.
-## 100% covered by 247 sets.
-## 100% covered by 249 sets.
-## 100% covered by 254 sets.
-## 100% covered by 233 sets.
-## 100% covered by 238 sets.
-## 100% covered by 316 sets.
-## 100% covered by 315 sets.
-## 100% covered by 266 sets.
-## 100% covered by 274 sets.
-## 100% covered by 304 sets.
-## 100% covered by 308 sets.
-## 100% covered by 262 sets.
-## 100% covered by 272 sets.
-## 100% covered by 459 sets.
-## 100% covered by 459 sets.
-## 100% covered by 473 sets.
-## 100% covered by 475 sets.
-## 100% covered by 495 sets.
-## 100% covered by 507 sets.
-## 100% covered by 448 sets.
-## 100% covered by 459 sets.
-## 100% covered by 629 sets.
-## 100% covered by 631 sets.
-## 100% covered by 540 sets.
-## 100% covered by 547 sets.
 ## 100% covered by 609 sets.
-## 100% covered by 616 sets.
-## 100% covered by 533 sets.
-## 100% covered by 544 sets.
-## 100% covered by 233 sets.
-## 100% covered by 234 sets.
-## 100% covered by 249 sets.
-## 100% covered by 237 sets.
-## 100% covered by 246 sets.
-## 100% covered by 259 sets.
-## 100% covered by 238 sets.
-## 100% covered by 237 sets.
-## 100% covered by 310 sets.
-## 100% covered by 312 sets.
-## 100% covered by 261 sets.
-## 100% covered by 278 sets.
-## 100% covered by 297 sets.
-## 100% covered by 309 sets.
-## 100% covered by 259 sets.
-## 100% covered by 275 sets.
-## 100% covered by 535 sets.
-## 100% covered by 551 sets.
-## 100% covered by 593 sets.
-## 100% covered by 594 sets.
-## 100% covered by 850 sets.
-## 100% covered by 842 sets.
-## 100% covered by 579 sets.
-## 100% covered by 573 sets.
-## 100% covered by 943 sets.
-## 100% covered by 944 sets.
-## 100% covered by 647 sets.
-## 100% covered by 644 sets.
-## 100% covered by 950 sets.
-## 100% covered by 923 sets.
-## 100% covered by 685 sets.
-## 100% covered by 683 sets.
-## 100% covered by 245 sets.
-## 100% covered by 253 sets.
-## 100% covered by 266 sets.
-## 100% covered by 267 sets.
-## 100% covered by 390 sets.
-## 100% covered by 393 sets.
-## 100% covered by 292 sets.
-## 100% covered by 275 sets.
-## 100% covered by 407 sets.
-## 100% covered by 400 sets.
-## 100% covered by 255 sets.
-## 100% covered by 266 sets.
-## 100% covered by 408 sets.
-## 100% covered by 401 sets.
-## 100% covered by 283 sets.
-## 100% covered by 275 sets.
-## 100% covered by 548 sets.
-## 100% covered by 552 sets.
-## 100% covered by 595 sets.
-## 100% covered by 593 sets.
-## 100% covered by 845 sets.
-## 100% covered by 842 sets.
-## 100% covered by 584 sets.
-## 100% covered by 581 sets.
-## 100% covered by 937 sets.
-## 100% covered by 937 sets.
-## 100% covered by 640 sets.
-## 100% covered by 649 sets.
-## 100% covered by 955 sets.
-## 100% covered by 920 sets.
-## 100% covered by 655 sets.
-## 100% covered by 683 sets.
-## 100% covered by 242 sets.
-## 100% covered by 243 sets.
-## 100% covered by 271 sets.
-## 100% covered by 263 sets.
-## 100% covered by 391 sets.
-## 100% covered by 396 sets.
-## 100% covered by 288 sets.
-## 100% covered by 277 sets.
-## 100% covered by 402 sets.
-## 100% covered by 397 sets.
-## 100% covered by 254 sets.
-## 100% covered by 255 sets.
-## 100% covered by 408 sets.
-## 100% covered by 402 sets.
-## 100% covered by 281 sets.
-## 100% covered by 281 sets.
-## 100% covered by 556 sets.
+## 100% covered by 607 sets.
+## 100% covered by 530 sets.
 ## 100% covered by 546 sets.
+## 100% covered by 461 sets.
+## 100% covered by 462 sets.
+## 100% covered by 479 sets.
+## 100% covered by 482 sets.
+## 100% covered by 486 sets.
+## 100% covered by 506 sets.
+## 100% covered by 449 sets.
+## 100% covered by 450 sets.
+## 100% covered by 622 sets.
+## 100% covered by 617 sets.
+## 100% covered by 533 sets.
+## 100% covered by 548 sets.
+## 100% covered by 605 sets.
 ## 100% covered by 606 sets.
-## 100% covered by 590 sets.
-## 100% covered by 854 sets.
-## 100% covered by 852 sets.
-## 100% covered by 573 sets.
-## 100% covered by 583 sets.
-## 100% covered by 961 sets.
-## 100% covered by 927 sets.
-## 100% covered by 630 sets.
-## 100% covered by 651 sets.
-## 100% covered by 944 sets.
-## 100% covered by 912 sets.
-## 100% covered by 668 sets.
-## 100% covered by 679 sets.
-## 100% covered by 253 sets.
-## 100% covered by 246 sets.
-## 100% covered by 267 sets.
-## 100% covered by 270 sets.
-## 100% covered by 396 sets.
-## 100% covered by 399 sets.
-## 100% covered by 285 sets.
-## 100% covered by 282 sets.
-## 100% covered by 402 sets.
-## 100% covered by 400 sets.
-## 100% covered by 253 sets.
-## 100% covered by 261 sets.
-## 100% covered by 409 sets.
-## 100% covered by 403 sets.
-## 100% covered by 281 sets.
-## 100% covered by 273 sets.</code></pre>
+## 100% covered by 539 sets.
+## 100% covered by 545 sets.
+## 100% covered by 464 sets.
+## 100% covered by 460 sets.
+## 100% covered by 476 sets.
+## 100% covered by 482 sets.
+## 100% covered by 501 sets.
+## 100% covered by 505 sets.
+## 100% covered by 444 sets.
+## 100% covered by 460 sets.
+## 100% covered by 617 sets.
+## 100% covered by 628 sets.
+## 100% covered by 534 sets.
+## 100% covered by 543 sets.
+## 100% covered by 599 sets.
+## 100% covered by 607 sets.
+## 100% covered by 537 sets.
+## 100% covered by 537 sets.
+## 100% covered by 459 sets.
+## 100% covered by 462 sets.
+## 100% covered by 471 sets.
+## 100% covered by 482 sets.
+## 100% covered by 482 sets.
+## 100% covered by 509 sets.
+## 100% covered by 454 sets.
+## 100% covered by 458 sets.
+## 100% covered by 617 sets.
+## 100% covered by 618 sets.
+## 100% covered by 537 sets.
+## 100% covered by 541 sets.
+## 100% covered by 615 sets.
+## 100% covered by 613 sets.
+## 100% covered by 535 sets.
+## 100% covered by 542 sets.</code></pre>
 <pre class="r"><code>names(sce_milo) = anno$id
 saveRDS(sce_milo , file = paste0(root.dir , &quot;data/processed/embedding_analysis_updated/sce_milo_nhoods.Rds&quot;))</code></pre>
 </div>
 <div id="session-info" class="section level1" number="3">
 <h1><span class="header-section-number">3</span> Session Info</h1>
 <pre class="r"><code>sessionInfo()</code></pre>
-<pre><code>## R version 4.2.2 (2022-10-31)
+<pre><code>## R version 4.2.3 (2023-03-15)
 ## Platform: x86_64-pc-linux-gnu (64-bit)
 ## Running under: Ubuntu 22.04.2 LTS
 ## 
@@ -1058,16 +939,16 @@ saveRDS(sce_milo , file = paste0(root.dir , &quot;data/processed/embedding_analy
 ##  [1] MetBrewer_0.2.0              scran_1.26.2                
 ##  [3] scuttle_1.8.4                MouseGastrulationData_1.12.0
 ##  [5] SpatialExperiment_1.8.1      geneBasisR_0.0.0.9000       
-##  [7] ggpubr_0.6.0                 ggplot2_3.4.1               
+##  [7] ggpubr_0.6.0                 ggplot2_3.4.2               
 ##  [9] BiocParallel_1.32.6          miloR_1.6.0                 
 ## [11] edgeR_3.40.2                 limma_3.54.2                
 ## [13] miloDE_0.0.0.9000            SingleCellExperiment_1.20.1 
 ## [15] SummarizedExperiment_1.28.0  Biobase_2.58.0              
 ## [17] GenomicRanges_1.50.2         GenomeInfoDb_1.34.9         
 ## [19] IRanges_2.32.0               S4Vectors_0.36.2            
-## [21] BiocGenerics_0.44.0          MatrixGenerics_1.11.1       
+## [21] BiocGenerics_0.44.0          MatrixGenerics_1.13.0       
 ## [23] matrixStats_0.63.0           BiocStyle_2.26.0            
-## [25] rmarkdown_2.20              
+## [25] rmarkdown_2.21              
 ## 
 ## loaded via a namespace (and not attached):
 ##   [1] rappdirs_0.3.3                R.methodsS3_1.8.2            
@@ -1077,97 +958,97 @@ saveRDS(sce_milo , file = paste0(root.dir , &quot;data/processed/embedding_analy
 ##   [9] DelayedArray_0.24.0           R.utils_2.12.2               
 ##  [11] wesanderson_0.3.6             data.table_1.14.8            
 ##  [13] rpart_4.1.19                  KEGGREST_1.38.0              
-##  [15] hardhat_1.2.0                 RCurl_1.98-1.10              
+##  [15] hardhat_1.3.0                 RCurl_1.98-1.12              
 ##  [17] doParallel_1.0.17             generics_0.1.3               
 ##  [19] ScaledMatrix_1.6.0            cowplot_1.1.1                
-##  [21] RSQLite_2.3.0                 combinat_0.0-8               
+##  [21] RSQLite_2.3.1                 combinat_0.0-8               
 ##  [23] future_1.32.0                 bit_4.0.5                    
 ##  [25] httpuv_1.6.9                  lubridate_1.9.2              
 ##  [27] viridis_0.6.2                 gower_1.0.1                  
-##  [29] xfun_0.37                     jquerylib_0.1.4              
+##  [29] xfun_0.38                     jquerylib_0.1.4              
 ##  [31] promises_1.2.0.1              evaluate_0.20                
-##  [33] fansi_1.0.4                   dbplyr_2.3.1                 
-##  [35] igraph_1.4.1                  DBI_1.1.3                    
+##  [33] fansi_1.0.4                   dbplyr_2.3.2                 
+##  [35] igraph_1.4.2                  DBI_1.1.3                    
 ##  [37] ellipsis_0.3.2                purrr_1.0.1                  
 ##  [39] tester_0.1.7                  paleotree_3.4.5              
-##  [41] dplyr_1.1.0                   backports_1.4.1              
+##  [41] dplyr_1.1.1                   backports_1.4.1              
 ##  [43] bookdown_0.33                 ggcorrplot_0.1.4             
-##  [45] sparseMatrixStats_1.11.1      vctrs_0.5.2                  
+##  [45] sparseMatrixStats_1.11.1      vctrs_0.6.2                  
 ##  [47] abind_1.4-5                   cachem_1.0.7                 
 ##  [49] batchelor_1.14.1              withr_2.5.0                  
-##  [51] ggforce_0.4.1                 parsnip_1.0.4                
+##  [51] ggforce_0.4.1                 parsnip_1.1.0                
 ##  [53] mnormt_2.1.1                  phytools_1.5-1               
 ##  [55] cluster_2.1.4                 ExperimentHub_2.6.0          
 ##  [57] ape_5.7-1                     crayon_1.5.2                 
 ##  [59] recipes_1.0.5                 pkgconfig_2.0.3              
 ##  [61] tweenr_2.0.2                  nlme_3.1-162                 
 ##  [63] vipor_0.4.5                   nnet_7.3-18                  
-##  [65] pals_1.7                      rlang_1.0.6                  
+##  [65] pals_1.7                      rlang_1.1.0                  
 ##  [67] globals_0.16.2                lifecycle_1.0.3              
 ##  [69] filelock_1.0.2                BiocFileCache_2.6.1          
 ##  [71] rsvd_1.0.5                    AnnotationHub_3.6.0          
 ##  [73] dichromat_2.0-0.1             polyclip_1.10-4              
-##  [75] lmtest_0.9-40                 Matrix_1.5-3                 
+##  [75] lmtest_0.9-40                 Matrix_1.5-4                 
 ##  [77] yardstick_1.1.0               phangorn_2.11.1              
 ##  [79] carData_3.0-5                 Rhdf5lib_1.20.0              
-##  [81] zoo_1.8-11                    beeswarm_0.4.0               
+##  [81] zoo_1.8-12                    beeswarm_0.4.0               
 ##  [83] png_0.1-8                     viridisLite_0.4.1            
 ##  [85] rjson_0.2.21                  bitops_1.0-7                 
 ##  [87] R.oo_1.25.0                   rhdf5filters_1.10.1          
-##  [89] Biostrings_2.66.0             blob_1.2.3                   
+##  [89] Biostrings_2.66.0             blob_1.2.4                   
 ##  [91] DelayedMatrixStats_1.20.0     stringr_1.5.0                
-##  [93] RcppGreedySetCover_0.1.0      parallelly_1.34.0            
+##  [93] RcppGreedySetCover_0.1.0      parallelly_1.35.0            
 ##  [95] rstatix_0.7.2                 ggsignif_0.6.4               
-##  [97] beachmat_2.14.0               scales_1.2.1                 
+##  [97] beachmat_2.14.2               scales_1.2.1                 
 ##  [99] memoise_2.0.1                 magrittr_2.0.3               
 ## [101] plyr_1.8.8                    gdata_2.18.0.1               
-## [103] zlibbioc_1.44.0               compiler_4.2.2               
+## [103] zlibbioc_1.44.0               compiler_4.2.3               
 ## [105] dqrng_0.3.0                   RColorBrewer_1.1-3           
-## [107] plotrix_3.8-2                 cli_3.6.0                    
+## [107] plotrix_3.8-2                 cli_3.6.1                    
 ## [109] XVector_0.38.0                listenv_0.9.0                
 ## [111] patchwork_1.1.2               MASS_7.3-58.3                
 ## [113] tidyselect_1.2.0              stringi_1.7.12               
 ## [115] yaml_2.3.7                    BiocSingular_1.14.0          
 ## [117] locfit_1.5-9.7                ggrepel_0.9.3                
-## [119] pbmcapply_1.5.1               grid_4.2.2                   
+## [119] pbmcapply_1.5.1               grid_4.2.3                   
 ## [121] sass_0.4.5                    fastmatch_1.1-3              
-## [123] tools_4.2.2                   timechange_0.2.0             
-## [125] future.apply_1.10.0           parallel_4.2.2               
+## [123] tools_4.2.3                   timechange_0.2.0             
+## [125] future.apply_1.10.0           parallel_4.2.3               
 ## [127] bluster_1.8.0                 foreach_1.5.2                
 ## [129] metapod_1.6.0                 gridExtra_2.3                
-## [131] prodlim_2019.11.13            scatterplot3d_0.3-42         
+## [131] prodlim_2023.03.31            scatterplot3d_0.3-43         
 ## [133] farver_2.1.1                  ggraph_2.1.0                 
 ## [135] DropletUtils_1.18.1           RcppZiggurat_0.1.6           
 ## [137] digest_0.6.31                 BiocManager_1.30.20          
 ## [139] shiny_1.7.4                   lava_1.7.2.1                 
 ## [141] quadprog_1.5-8                Rcpp_1.0.10                  
-## [143] car_3.1-1                     broom_1.0.4                  
+## [143] car_3.1-2                     broom_1.0.4                  
 ## [145] later_1.3.0                   BiocVersion_3.16.0           
 ## [147] AnnotationDbi_1.60.2          httr_1.4.5                   
-## [149] colorspace_2.1-0              splines_4.2.2                
+## [149] colorspace_2.1-0              splines_4.2.3                
 ## [151] uwot_0.1.14                   statmod_1.5.0                
 ## [153] expm_0.999-7                  graphlayouts_0.8.4           
 ## [155] mapproj_1.2.11                xtable_1.8-4                 
 ## [157] jsonlite_1.8.4                tidygraph_1.2.3              
 ## [159] timeDate_4022.108             Rfast_2.0.7                  
 ## [161] ipred_0.9-14                  R6_2.5.1                     
-## [163] mime_0.12                     pillar_1.8.1                 
-## [165] htmltools_0.5.4               glue_1.6.2                   
+## [163] mime_0.12                     pillar_1.9.0                 
+## [165] htmltools_0.5.5               glue_1.6.2                   
 ## [167] fastmap_1.1.1                 BiocNeighbors_1.16.0         
 ## [169] interactiveDisplayBase_1.36.0 class_7.3-21                 
 ## [171] codetools_0.2-19              maps_3.4.1                   
 ## [173] optimParallel_1.0-2           furrr_0.3.1                  
-## [175] utf8_1.2.3                    lattice_0.20-45              
-## [177] bslib_0.4.2                   tibble_3.2.0                 
+## [175] utf8_1.2.3                    lattice_0.21-8               
+## [177] bslib_0.4.2                   tibble_3.2.1                 
 ## [179] ResidualMatrix_1.8.0          Augur_1.0.3                  
 ## [181] numDeriv_2016.8-1.1           curl_5.0.0                   
 ## [183] ggbeeswarm_0.7.1              gtools_3.9.4                 
 ## [185] magick_2.7.4                  survival_3.5-5               
 ## [187] munsell_0.5.0                 BumpyMatrix_1.6.0            
-## [189] rhdf5_2.42.0                  GenomeInfoDbData_1.2.9       
+## [189] rhdf5_2.42.1                  GenomeInfoDbData_1.2.9       
 ## [191] rsample_1.1.1                 iterators_1.0.14             
 ## [193] HDF5Array_1.26.0              reshape2_1.4.4               
-## [195] gtable_0.3.1</code></pre>
+## [195] gtable_0.3.3</code></pre>
 </div>
 
 

@@ -43,20 +43,32 @@ genes = list(all = genes_all$HVG , wt = genes_wt$HVG)
 
 
 chimera_speicific_genes = c("Rpgrip1" , "Slc24a5" , "Cbx3" , "Actb")
+chimera_speicific_genes = c("Rpgrip1" , "Cbx3" , "Actb")
 chimera_speicific_stat = data.frame(SYMBOL = chimera_speicific_genes)
 chimera_speicific_stat = merge(chimera_speicific_stat , rowdata , all.x = T , all.y = F)
 chimera_speicific_stat$gene_in_wt = chimera_speicific_stat$ENSEMBL %in% genes$wt
 chimera_speicific_stat$gene_in_all = chimera_speicific_stat$ENSEMBL %in% genes$all
 chimera_speicific_stat$SYMBOL = factor(chimera_speicific_stat$SYMBOL , levels = chimera_speicific_genes)
 
+
+anno_mnn = expand.grid(type = c("supervised" , "unsupervised") , genes = c("wt", "all") , method = c("mnn") )
+anno_azimuth = expand.grid(type = c("supervised" , "unsupervised") , genes = c("wt", "all") , method = c("azimuth" ))
+anno_rest = expand.grid(type = c("supervised" , "unsupervised") , genes = c("wt", "all") , method = c( "scvi" , "scanvi"))
+anno = rbind(anno_azimuth , anno_rest , anno_mnn)
+anno$reducedDim.name = paste0(anno$method , "_" , anno$type , "_" , anno$genes)
+
+
 sce_milo_nhoods = readRDS(paste0(root.dir , "data/processed/embedding_analysis_updated/sce_milo_nhoods.Rds"))
 
 stat = readRDS(paste0(root.dir , "data/temp/embedding_homogeneity_stat.Rds"))
 
 
+
 ```
 
 # UMAPs, colored by CT
+
+@@ Old, dont need it probably
 
 ```{r umaps-by-ct, message = FALSE}
 
@@ -77,13 +89,6 @@ get_umap_plot = function(sce , reducedDim.name){
     labs(x = "" , y = "") 
   return(p)
 }
-
-
-anno_mnn = expand.grid(type = c("supervised" , "unsupervised") , genes = c("wt", "all") , method = c("mnn") )
-anno_azimuth = expand.grid(type = c("supervised" , "unsupervised") , genes = c("wt", "all") , method = c("azimuth" ))
-anno_rest = expand.grid(type = c("supervised" , "unsupervised") , genes = c("wt", "all") , method = c( "scvi" , "scanvi"))
-anno = rbind(anno_azimuth , anno_rest , anno_mnn)
-anno$reducedDim.name = paste0(anno$method , "_" , anno$type , "_" , anno$genes)
 
 plots = lapply(1:nrow(anno), function(i){
   reducedDim.name = anno$reducedDim.name[i]
@@ -204,12 +209,13 @@ get_boxplot_per_gene = function(gene){
 
 
 plots = lapply(levels(chimera_speicific_stat$SYMBOL) , function(gene){
-  p = get_boxplot_per_gene(gene)
+  p = get_boxplot_per_gene(gene) +
+    theme(legend.position = "none")
   print(p)
 })
-p = ggarrange(plotlist = plots , common.legend = T , ncol = length(chimera_speicific_stat$SYMBOL) , legend = "right")
+p = ggarrange(plotlist = plots , common.legend = F , ncol = length(chimera_speicific_stat$SYMBOL))
 p
-ggsave(filename = paste0(figures.dir, "boxplot_w_chimera_genes_counts", ".png"), plot = p, width = 9, height = 2)
+ggsave(filename = paste0(figures.dir, "boxplot_w_chimera_genes_counts", ".png"), plot = p, width = 6, height = 2)
 
 
 
@@ -270,38 +276,119 @@ saveRDS(stat , paste0(root.dir , "data/temp/embedding_homogeneity_stat.Rds"))
 
 # Plot
 
+## Single simulation
+
 ```{r plot-sd-boxplot, message = FALSE}
 
 
+anno_mnn = expand.grid(type = c("supervised" , "unsupervised") , genes = c("wt", "all") , method = c("mnn") )
+anno_azimuth = expand.grid(type = c("supervised" , "unsupervised") , genes = c("wt", "all") , method = c("azimuth" ))
+anno_rest = expand.grid(type = c("supervised" , "unsupervised") , genes = c("wt", "all") , method = c( "scvi" , "scanvi"))
+anno = rbind(anno_azimuth , anno_rest , anno_mnn)
+anno$reducedDim.name = paste0(anno$method , "_" , anno$type , "_" , anno$genes)
+
+
 stat = readRDS(paste0(root.dir , "data/temp/embedding_homogeneity_stat.Rds"))
+# fix for one round
+stat = stat[stat$round == 1 , ]
+
 current.stat = stat[stat$reduced_dim %in% anno$reducedDim.name,]
 current.stat$reduced_dim = factor(current.stat$reduced_dim , levels = anno$reducedDim.name)
 current.stat$reduced_dim_type_genes = paste0(current.stat$reduced_dim_type , "_" , current.stat$reduced_dim_genes)
-current.stat$reduced_dim_type_genes = factor(current.stat$reduced_dim_type_genes , levels = c("unsupervised_wt" , "unsupervised_all" , "supervised_wt" , "supervised_all"))
+current.stat$reduced_dim_type_genes = factor(current.stat$reduced_dim_type_genes , levels = c("unsupervised_all" , "unsupervised_wt" , "supervised_all" , "supervised_wt"))
 
+# update naming
+current.stat$reduced_dim_method[current.stat$reduced_dim_method == "azimuth"] = "Azimuth"
+current.stat$reduced_dim_method[current.stat$reduced_dim_method == "mnn"] = "MNN"
+current.stat$reduced_dim_method[current.stat$reduced_dim_method == "scvi"] = "scVI"
+current.stat$reduced_dim_method[current.stat$reduced_dim_method == "scanvi"] = "scANVI"
 
-cols = c( "paleturquoise4" , "paleturquoise2" , "rosybrown4" , "rosybrown1" )
+#cols = c( "paleturquoise3" , "paleturquoise4" , "rosybrown2" , "rosybrown4" )
+cols = met.brewer("Derain" , n = 7)[c(1,2,4,5)]
 
 
 plots = lapply(levels(chimera_speicific_stat$SYMBOL) , function(gene){
+  current.x = current.stat$sd[current.stat$gene == gene & current.stat$type == "chimera"]
+  current.x = current.x[!is.na(current.x)]
   p = ggplot(current.stat[current.stat$gene == gene & current.stat$type == "chimera", ] , aes(x = reduced_dim_method , y = sd , fill = reduced_dim_type_genes)) + 
-    geom_boxplot(outlier.size= .25) + 
-    facet_wrap(~gene ) + 
+    geom_boxplot(outlier.size= .25 , fatten = 1 , lwd = .2) + 
     theme_bw() +
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
     labs(x = "" , y = "")  +
-    scale_fill_manual(values = cols, name = "Embedding") 
+    scale_fill_manual(values = cols, name = "Embedding") +
+    theme(legend.position = "none") + ggtitle(gene) +
+    ylim(c(quantile(current.x , 0.0) , quantile(current.x , 1) ))
   return(p)
-  #ggsave(filename = paste0(figures.dir, "sd_distr/", gene, ".png"), plot = p, width = 7, height = 4)
 })
-p = ggarrange(plotlist = plots , common.legend = T , ncol = length(levels(chimera_speicific_stat$SYMBOL)) , nrow = 1)
+p = ggarrange(plotlist = plots , common.legend = F , ncol = length(levels(chimera_speicific_stat$SYMBOL)) , nrow = 1)
 p
+ggsave(filename = paste0(figures.dir, "sd_distr", ".png"), plot = p, width = 6.5, height = 2.8)
 
-ggsave(filename = paste0(figures.dir, "sd_distr", ".png"), plot = p, width = 12, height = 3)
+
+# assess significance (within same method)
+anno_sig.grid = expand.grid(gene = as.character(unique(chimera_speicific_stat$SYMBOL)) , method = as.character(unique(current.stat$reduced_dim_method)) , reduced_dim_type_genes = c("supervised_wt" , "supervised_all" , "unsupervised_wt"))
+
+sig_stat = lapply(1:nrow(anno_sig.grid) , function(i){
+  current.gene = anno_sig.grid$gene[i]
+  current.method = anno_sig.grid$method[i]
+  
+  x = current.stat$sd[current.stat$gene == current.gene & current.stat$reduced_dim_method == current.method & current.stat$reduced_dim_type_genes == "unsupervised_all"]
+  y = current.stat$sd[current.stat$gene == current.gene & current.stat$reduced_dim_method == current.method & current.stat$reduced_dim_type_genes == as.character(anno_sig.grid$reduced_dim_type_genes[i])]
+  x = x[!is.na(x)]
+  y = y[!is.na(y)]
+  
+  out = t.test(x , y)  
+  out = out$p.value
+  out = data.frame(gene = current.gene , method = current.method , reduced_dim_type_genes = as.character(anno_sig.grid$reduced_dim_type_genes[i]) , pval = out)
+  return(out)
+})
+sig_stat = do.call(rbind , sig_stat)
+sig_stat$pval_005 = sig_stat$pval < 0.05
+sig_stat$pval_001 = sig_stat$pval < 0.01
+sig_stat$pval_0001 = sig_stat$pval < 0.001
+sig_stat = sig_stat[!sig_stat$method == "Azimuth" , ]
+
 
 
 ```
 
+## Combined across several simulations
+
+```{r plot-sd-boxplot, message = FALSE}
+
+
+stat = readRDS(paste0(root.dir , "data/temp/embedding_homogeneity_stat.Rds"))
+
+stat = as.data.frame(stat[stat$type == "chimera", ] %>% group_by(reduced_dim_method , reduced_dim_type , reduced_dim_genes , reduced_dim , gene , round) %>% dplyr::summarise(sd = mean(sd , na.rm = T)))
+
+
+current.stat = stat[stat$reduced_dim %in% anno$reducedDim.name,]
+current.stat$reduced_dim = factor(current.stat$reduced_dim , levels = anno$reducedDim.name)
+current.stat$reduced_dim_type_genes = paste0(current.stat$reduced_dim_type , "_" , current.stat$reduced_dim_genes)
+current.stat$reduced_dim_type_genes = factor(current.stat$reduced_dim_type_genes , levels = c("unsupervised_all" , "unsupervised_wt" , "supervised_all" , "supervised_wt"))
+
+# update naming
+current.stat$reduced_dim_method[current.stat$reduced_dim_method == "azimuth"] = "Azimuth"
+current.stat$reduced_dim_method[current.stat$reduced_dim_method == "mnn"] = "MNN"
+current.stat$reduced_dim_method[current.stat$reduced_dim_method == "scvi"] = "scVI"
+current.stat$reduced_dim_method[current.stat$reduced_dim_method == "scanvi"] = "scANVI"
+
+plots = lapply(levels(chimera_speicific_stat$SYMBOL) , function(gene){
+  p = ggplot(current.stat[current.stat$gene == gene , ] , aes(x = reduced_dim_method , y = sd , fill = reduced_dim_type_genes)) + 
+    geom_boxplot(outlier.size= .25 , fatten = 1 , lwd = .2) + 
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+    labs(x = "" , y = "")  +
+    scale_fill_manual(values = cols, name = "Embedding") +
+    theme(legend.position = "none") + ggtitle(gene) 
+  return(p)
+})
+p = ggarrange(plotlist = plots , common.legend = F , ncol = length(levels(chimera_speicific_stat$SYMBOL)) , nrow = 1)
+p
+ggsave(filename = paste0(figures.dir, "sd_distr_combined", ".png"), plot = p, width = 6.5, height = 2.8)
+
+
+```
 
 # DE-stat
 
@@ -318,132 +405,174 @@ colnames(de_stat)[colnames(de_stat) == "gene"] = "ENSEMBL"
 de_stat = merge(de_stat , rowdata , all.x = T , all.y = F)
 de_stat = de_stat[de_stat$SYMBOL %in% chimera_speicific_stat$SYMBOL , ]
 de_stat$SYMBOL = factor(de_stat$SYMBOL , levels = chimera_speicific_genes)
-
-# add number of cells stat
-df = lapply(unique(de_stat$id) , function(id){
-  nhoods_sce = sce_milo_nhoods[[which(names(sce_milo_nhoods) == id)]]
-  out = data.frame(Nhood_center = colnames(nhoods_sce) , n_cells = colSums(nhoods_sce))
-  out$id = id
-  return(out)
-})
-df = do.call(rbind , df)
-
-de_stat = merge(de_stat , df , by= c("Nhood_center" , "id") , all.x = T)
 de_stat = merge(de_stat , de_stat_per_gene[, c("ENSEMBL" , "median_logFC" , "mean_logFC" , "logFC_all")] , all.x = T , all.y = F)
 
-
-```
-
-## Boxplot distr - logFC and n-hoods-sig
-
-```{r boxplot-distr-milo-de, message = FALSE}
-
-
-names(embedding_cols) = embeddings
-
-plots = lapply(chimera_speicific_stat$SYMBOL, function(gene){
-  gene = genes[i]
-  p = ggplot(de_stat[de_stat$SYMBOL == gene , ], aes(x = SYMBOL , y = logFC , fill = embedding)) + 
-    geom_boxplot(alpha = .8 , outlier.size = .25) + 
-    theme_bw() + 
-    theme(axis.text.x = element_blank()) + 
-    scale_fill_manual(values = embedding_cols) +
-    labs(x = "" ) + 
-    theme(legend.position = "none") + 
-    ylim(c(0 , lims[i])) +
-    geom_hline(yintercept = de_stat_per_gene$median_logFC[de_stat_per_gene$SYMBOL == gene] , "color" = "black" , "linetype" = "dashed") + 
-    ggtitle(gene)
-  return(p)
-})
-p = ggarrange(plotlist = plots , ncol = 3)
-p
-ggsave(filename = paste0(figures.dir, "milo_de/logFC_distr", ".png"), plot = p, width = 7, height = 3)
+#
+de_stat = de_stat[de_stat$reduced_dim %in% anno$reducedDim.name , ]
+de_stat$reduced_dim = factor(de_stat$reduced_dim , levels = anno$reducedDim.name)
+de_stat$reduced_dim_type_genes = paste0(de_stat$reduced_dim_type , "_" , de_stat$reduced_dim_genes)
+de_stat$reduced_dim_type_genes = factor(de_stat$reduced_dim_type_genes , levels = c("unsupervised_all" , "unsupervised_wt" , "supervised_all" , "supervised_wt"))
 
 
-
-# check p-value stat
-unq.embeddings = as.character(unique(de_stat$embedding))
-unq.embeddings_grid = expand.grid(embedding_1 = unq.embeddings , 
-                                  embedding_2 = unq.embeddings , gene = genes_chimera_specific )
-unq.embeddings_grid = unq.embeddings_grid[!unq.embeddings_grid$embedding_1 ==
-                                            unq.embeddings_grid$embedding_2 , ]  
-
-pval_stat = sapply(1:nrow(unq.embeddings_grid) , function(i){
-  current.gene = unq.embeddings_grid$gene[i]
-  x = de_stat$logFC[ de_stat$SYMBOL == current.gene & de_stat$embedding == unq.embeddings_grid$embedding_1[i]]
-  y = de_stat$logFC[de_stat$SYMBOL == current.gene & de_stat$embedding == unq.embeddings_grid$embedding_2[i]]
-    
-  current.test = t.test(x , y )  
-  return(current.test$p.value)
-})
-unq.embeddings_grid$pval = pval_stat
-
-unq.embeddings_grid$embedding_1 = factor(unq.embeddings_grid$embedding_1 , levels = embeddings)
-unq.embeddings_grid$embedding_2 = factor(unq.embeddings_grid$embedding_2 , levels = embeddings)
-
-
-# test for diff genes what is there p-value distr
-unq.embeddings_grid$test = unq.embeddings_grid$pval < 0.05
-p = ggplot(unq.embeddings_grid , aes(x = embedding_1 , y = embedding_2 , fill = test )) +
-  geom_tile() +
-  facet_wrap(~gene) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
-p
-
+# update methods
+de_stat$reduced_dim_method[de_stat$reduced_dim_method == "azimuth"] = "Azimuth"
+de_stat$reduced_dim_method[de_stat$reduced_dim_method == "mnn"] = "MNN"
+de_stat$reduced_dim_method[de_stat$reduced_dim_method == "scvi"] = "scVI"
+de_stat$reduced_dim_method[de_stat$reduced_dim_method == "scanvi"] = "scANVI"
 
 
 
 ```
 
-## Combined stat
+## miloDE stat - single simulation
+
+### logFC
 
 ```{r boxplot-distr-milo-de, message = FALSE}
 
 
-de_stat_combined = as.data.frame(de_stat %>% group_by(SYMBOL , id , reduced_dim_method , reduced_dim_type , reduced_dim_genes , reduced_dim , order , k , round) %>% dplyr::summarise(logFC = median(logFC , na.rm = T) , mean_logFC = mean(mean_logFC , na.rm = T), median_logFC = mean(median_logFC , na.rm = T),  logFC_all = mean(logFC_all , na.rm = T), frac_hoods_sig_01 = mean(pval < 0.1 , na.rm = T) , frac_hoods_sig_005 = mean(pval < 0.05 , na.rm = T) , frac_hoods_sig_001 = mean(pval < 0.01 , na.rm = T) , frac_hoods_sig_0001 = mean(pval < 0.005 , na.rm = T)  , frac_hoods_sig_0005 = mean(pval < 0.001 , na.rm = T) , frac_hoods_sig_00001 = mean(pval < 0.0001 , na.rm = T) ))
+current.de_stat = de_stat[de_stat$round == 1 , ]
 
-de_stat_combined = de_stat_combined[de_stat_combined$reduced_dim %in% anno$reducedDim.name , ]
-de_stat_combined$reduced_dim = factor(de_stat_combined$reduced_dim , levels = anno$reducedDim.name)
-de_stat_combined$reduced_dim_type_genes = paste0(de_stat_combined$reduced_dim_type , "_" , de_stat_combined$reduced_dim_genes)
-de_stat_combined$reduced_dim_type_genes = factor(de_stat_combined$reduced_dim_type_genes , levels = c("unsupervised_wt" , "unsupervised_all" , "supervised_wt" , "supervised_all"))
-
-
-
-plots = lapply(unique(de_stat_combined$SYMBOL) , function(gene){
-  p = ggplot(de_stat_combined[de_stat_combined$SYMBOL == gene, ] , aes(x = reduced_dim_method , y = frac_hoods_sig_001 , fill = reduced_dim_type_genes)) +
-    geom_boxplot() +
-    theme_bw() + 
-    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
-    ggtitle(gene) + 
-    scale_fill_manual(values = cols, name = "Embedding") + 
-    labs(x = "" , y = "") + 
-    ylim(c(0.65 , 1))
-  return(p)
-})
-p = ggarrange(plotlist = plots , common.legend = T , ncol = length(chimera_speicific_genes) , nrow = 1)
-p
-ggsave(filename = paste0(figures.dir, "frac_sig_distr", ".png"), plot = p, width = 12, height = 3)
-
-
-
-
-plots = lapply(unique(de_stat_combined$SYMBOL) , function(gene){
-  p = ggplot(de_stat_combined[de_stat_combined$SYMBOL == gene, ] , aes(x = reduced_dim_method , y = abs(logFC) , fill = reduced_dim_type_genes)) +
-    geom_boxplot() +
+plots = lapply(levels(de_stat$SYMBOL) , function(gene){
+  current.x = abs(current.de_stat$logFC[current.de_stat$SYMBOL == gene])
+  current.x = current.x[!is.na(current.x)]
+  if (gene == "Cbx3"){
+    ylim = c(0,5)
+  } else if (gene == "Actb"){
+    ylim = c(0,3)
+  } else {
+    ylim = c(2,10.5)
+  }
+  p = ggplot(current.de_stat[current.de_stat$SYMBOL == gene, ] , aes(x = reduced_dim_method , y = abs(logFC) , fill = reduced_dim_type_genes)) +
+    geom_boxplot(outlier.size = .25, fatten = 1 , lwd = .2) +
     theme_bw() + 
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
     ggtitle(gene) + 
     scale_fill_manual(values = cols , name = "Embedding") + 
     labs(x = "" , y = "") +
-    geom_hline(yintercept = abs(unique(de_stat_combined$logFC_all[de_stat_combined$SYMBOL == gene])) , "color" = "black" , "linetype" = "dashed") 
+    geom_hline(yintercept = abs(unique(current.de_stat$logFC_all[current.de_stat$SYMBOL == gene])) , "color" = "red" , "linetype" = "dashed") +
+    theme(legend.position = "none") +
+    ylim(ylim)
   return(p)
 })
-p = ggarrange(plotlist = plots , common.legend = T , ncol = length(chimera_speicific_genes) , nrow = 1)
+p = ggarrange(plotlist = plots , common.legend = F , ncol = length(chimera_speicific_genes) , nrow = 1)
 p
-ggsave(filename = paste0(figures.dir, "logFC_distr", ".png"), plot = p, width = 12, height = 3)
+ggsave(filename = paste0(figures.dir, "logFC_distr", ".png"), plot = p, width = 6.5, height = 2.8)
+
+
+# stat
+anno_sig.grid = expand.grid(gene = as.character(unique(chimera_speicific_stat$SYMBOL)) , method = as.character(unique(current.de_stat$reduced_dim_method)) , reduced_dim_type_genes = c("supervised_wt" , "supervised_all" , "unsupervised_wt"))
+
+sig_stat = lapply(1:nrow(anno_sig.grid) , function(i){
+  current.gene = anno_sig.grid$gene[i]
+  current.method = anno_sig.grid$method[i]
+  
+  x = abs( current.de_stat$logFC[current.de_stat$SYMBOL == current.gene & current.de_stat$reduced_dim_method == current.method & current.de_stat$reduced_dim_type_genes == "unsupervised_all"] )
+  y = abs( current.de_stat$logFC[current.de_stat$SYMBOL == current.gene & current.de_stat$reduced_dim_method == current.method & current.de_stat$reduced_dim_type_genes == as.character(anno_sig.grid$reduced_dim_type_genes[i])])
+  x = x[!is.na(x)]
+  y = y[!is.na(y)]
+  
+  out = t.test(x , y)  
+  out = out$p.value
+  out = data.frame(gene = current.gene , method = current.method , reduced_dim_type_genes = as.character(anno_sig.grid$reduced_dim_type_genes[i]) , pval = out)
+  return(out)
+})
+sig_stat = do.call(rbind , sig_stat)
+sig_stat$pval_005 = sig_stat$pval < 0.05
+sig_stat$pval_001 = sig_stat$pval < 0.01
+sig_stat$pval_0001 = sig_stat$pval < 0.001
+sig_stat = sig_stat[!sig_stat$method == "Azimuth" , ]
+
 
 
 ```
+
+### Frac of hood sig
+
+```{r boxplot-distr-milo-de, message = FALSE}
+
+
+current.de_stat = de_stat[de_stat$round == 1 , ]
+
+current.de_stat = as.data.frame(current.de_stat %>% group_by(SYMBOL , id , reduced_dim_method , reduced_dim_type , reduced_dim_genes , reduced_dim_type_genes , reduced_dim , round) %>% dplyr::summarise(frac_hoods_sig_01 = mean(pval < 0.1 , na.rm = T) , frac_hoods_sig_005 = mean(pval < 0.05 , na.rm = T) , frac_hoods_sig_001 = mean(pval < 0.01 , na.rm = T) , frac_hoods_sig_0001 = mean(pval < 0.005 , na.rm = T)  , frac_hoods_sig_0005 = mean(pval < 0.001 , na.rm = T) , frac_hoods_sig_00001 = mean(pval < 0.0001 , na.rm = T) ))
+
+
+plots = lapply(levels(chimera_speicific_stat$SYMBOL) , function(gene){
+  p = ggplot(current.de_stat[current.de_stat$SYMBOL == gene , ] , aes(x = reduced_dim_method , y = frac_hoods_sig_001 , fill = reduced_dim_type_genes)) + 
+    geom_bar(stat = "identity" , position = "dodge") + 
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+    labs(x = "" , y = "")  +
+    scale_fill_manual(values = cols, name = "Embedding") +
+    theme(legend.position = "none") + ggtitle(gene) 
+  return(p)
+})
+p = ggarrange(plotlist = plots , common.legend = F , ncol = length(levels(chimera_speicific_stat$SYMBOL)) , nrow = 1)
+p
+ggsave(filename = paste0(figures.dir, "frac_sig_distr", ".png"), plot = p, width = 6.5, height = 2.8)
+
+
+```
+
+
+## Combined
+
+### logFC
+
+```{r boxplot-distr-milo-de, message = FALSE}
+
+
+current.de_stat = as.data.frame(de_stat %>% group_by(reduced_dim_method , reduced_dim_type , reduced_dim_genes , reduced_dim_type_genes , reduced_dim , SYMBOL , round) %>% dplyr::summarise(logFC = abs(mean(logFC , na.rm = T)) , logFC_all = mean(logFC_all)))
+
+
+plots = lapply(levels(current.de_stat$SYMBOL) , function(gene){
+  p = ggplot(current.de_stat[current.de_stat$SYMBOL == gene, ] , aes(x = reduced_dim_method , y = logFC , fill = reduced_dim_type_genes)) +
+    geom_boxplot(outlier.size = .25 , fatten = 1 , lwd = .2) +
+    theme_bw() + 
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+    ggtitle(gene) + 
+    scale_fill_manual(values = cols , name = "Embedding") + 
+    labs(x = "" , y = "") +
+    geom_hline(yintercept = abs(unique(current.de_stat$logFC_all[current.de_stat$SYMBOL == gene])) , "color" = "red" , "linetype" = "dashed") +
+    theme(legend.position = "none") 
+  return(p)
+})
+p = ggarrange(plotlist = plots , common.legend = F , ncol = length(chimera_speicific_genes) , nrow = 1)
+p
+ggsave(filename = paste0(figures.dir, "logFC_distr_combined", ".png"), plot = p, width = 6.5, height = 2.8)
+
+
+
+
+```
+
+### Frac of hoods sig
+
+```{r boxplot-distr-milo-de, message = FALSE}
+
+
+current.de_stat = as.data.frame(de_stat %>% group_by(SYMBOL , id , reduced_dim_method , reduced_dim_type , reduced_dim_genes , reduced_dim_type_genes , reduced_dim , round) %>% dplyr::summarise(frac_hoods_sig_01 = mean(pval < 0.1 , na.rm = T) , frac_hoods_sig_005 = mean(pval < 0.05 , na.rm = T) , frac_hoods_sig_001 = mean(pval < 0.01 , na.rm = T) , frac_hoods_sig_0001 = mean(pval < 0.005 , na.rm = T)  , frac_hoods_sig_0005 = mean(pval < 0.001 , na.rm = T) , frac_hoods_sig_00001 = mean(pval < 0.0001 , na.rm = T) ))
+
+
+plots = lapply(levels(chimera_speicific_stat$SYMBOL) , function(gene){
+  p = ggplot(current.de_stat[current.de_stat$SYMBOL == gene , ] , aes(x = reduced_dim_method , y = frac_hoods_sig_001 , fill = reduced_dim_type_genes)) + 
+    geom_boxplot(outlier.size = .25 , fatten = 1 , lwd = .2) + 
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+    labs(x = "" , y = "")  +
+    scale_fill_manual(values = cols, name = "Embedding") +
+    theme(legend.position = "none") + ggtitle(gene) +
+    ylim(c(0.7,1))
+  return(p)
+})
+p = ggarrange(plotlist = plots , common.legend = F , ncol = length(levels(chimera_speicific_stat$SYMBOL)) , nrow = 1)
+p
+ggsave(filename = paste0(figures.dir, "frac_sig_distr_combined", ".png"), plot = p, width = 6.5, height = 2.8)
+
+
+
+```
+
 
 # Session Info
 

@@ -10,7 +10,7 @@
 
 
 
-<meta name="date" content="2023-05-31" />
+<meta name="date" content="2023-06-12" />
 
 <title>This pipeline to generate sims for DA-DE analysis</title>
 
@@ -783,7 +783,7 @@ function toggle_visibility(id1) {
 
 
 <h1 class="title toc-ignore">This pipeline to generate sims for DA-DE analysis</h1>
-<h4 class="date">31 May 2023</h4>
+<h4 class="date">12 June 2023</h4>
 
 </div>
 
@@ -883,7 +883,7 @@ genes_2_simulate = lapply(1:nrow(anno) , function(i){
   out$gene_type = c(rep(&quot;marker&quot; , length(genes_hvg)) , rep(&quot;not_marker&quot; , anno$n_not_markers[i]))
   out = merge(out , rowdata , all.x = T , all.y = F)
   out$range = ceiling(out$med_group_1 * (out$DEFacGroup2 - 1) * anno$effect_markers[i])
-  out$range[out$gene_type == &quot;not_marker&quot;] = ceiling(out$med_group_1[out$gene_type == &quot;not_marker&quot;]/2)
+  out$range[out$gene_type == &quot;not_marker&quot;] = ceiling(out$avg_group_1[out$gene_type == &quot;not_marker&quot;]*0.5)
   return(out)
 })
 names(genes_2_simulate) = anno$id</code></pre>
