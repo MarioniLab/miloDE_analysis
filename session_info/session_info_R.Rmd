@@ -1,0 +1,68 @@
+---
+title: "Session info"
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+
+```{r load, message = FALSE}
+
+
+
+library(Augur)
+library(batchelor)
+library(BiocNeighbors)
+library(BiocParallel)
+library(BiocSingular)
+library(cacoa)
+library(cluster)
+library(dbscan)
+library(dplyr)
+library(edgeR)
+library(enrichR)
+library(gdata)
+library(geneBasisR)
+library(ggbeeswarm)
+library(ggplot2)
+library(ggpubr)
+library(ggraph)
+library(igraph)
+library(irlba)
+library(knitr)
+library(limma)
+library(Matrix)
+library(MetBrewer)
+library(miloDE)
+library(miloR)
+library(MouseGastrulationData)
+library(pROC)
+library(purrr)
+library(reshape)
+library(reshape2)
+library(ROCR)
+library(scales)
+library(scran)
+library(scuttle)
+library(SingleCellExperiment)
+library(scWGCNA)
+library(Seurat)
+library(SeuratObject)
+library(splatter)
+library(stats)
+library(stringr)
+library(tibble)
+library(uwot)
+library(viridis)
+library(wesanderson)
+library(zellkonverter)
+
+```
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```
