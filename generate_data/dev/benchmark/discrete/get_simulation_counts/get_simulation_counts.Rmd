@@ -1,0 +1,285 @@
+---
+title: "Generate simulations to benchmark Cacoa vs miloDE"
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+
+```{r load, message = FALSE}
+
+library(SingleCellExperiment)
+library(batchelor)
+library(stats)
+library(Matrix)
+library(splatter)
+library(BiocParallel)
+library(BiocNeighbors)
+library(BiocSingular)
+library(pROC)
+library(ggplot2)
+library(ggpubr)
+library(scuttle)
+library(miloDE)
+library(miloR)
+library(viridis)
+library(stringr)
+
+ncores = 13
+
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+
+set.seed(32)
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+figures.dir = paste0(root.dir , "figures/benchmark/discrete/")
+
+
+```
+
+# Functions
+
+```{r funcs, message = FALSE}
+
+
+
+add_batch_corrected_pca = function(sce, genes = NULL, reduced.dim_name = "pca.corrected" , batch = "Batch" , d = 10, bpparam = NULL , correct = T){
+  require(batchelor)
+  if (is.null(genes)){
+    genes = rownames(sce)
+  }
+  meta = as.data.frame(colData(sce))
+  batchFactor = factor(meta[, colnames(meta) == batch])
+  if (is.null(bpparam)){
+    mbpca = multiBatchPCA(sce[genes , ], batch = batchFactor, d = d)
+  }
+  else {
+    mbpca = multiBatchPCA(sce[genes , ], batch = batchFactor, d = d , BPPARAM = bpparam)
+  }
+  if (correct){
+    out = do.call(reducedMNN, mbpca)
+    joint.pca = out$corrected
+  }
+  else {
+    joint.pca = do.call(rbind , mbpca)
+  }
+  joint.pca = joint.pca[order(rownames(joint.pca)) , ]
+  sce = sce[, order(colnames(sce))]
+  reducedDim(sce , reduced.dim_name) = joint.pca
+  return(sce)
+}
+
+
+```
+
+# Download reference data for param estimation
+
+```{r param-estimate, message = FALSE}
+
+
+#
+sce = readRDS(paste0(root.dir , "data/sces/mouse_embryo/WT/mouse_embryo_E8.5.Rds"))
+sce = sce[, sce$sample == 17]
+sce = scuttle::logNormCounts(sce)
+#
+# # main - we use these to create 2 CTs
+sce = geneBasisR::retain_informative_genes(sce , n = 3000)
+counts(sce) = as.matrix(counts(sce))
+# param estimation
+params = splatEstimate( sce )
+
+
+```
+
+
+# No batch
+
+## Get main ds - simulate 2 subpopulations
+
+```{r main-ds, message = FALSE}
+
+
+anno_1 = data.frame(group_prob = 0.005 , de_prob = c(0.04 , 0.07) , de_fac = c(1.6 , 1.2))
+anno_2 = data.frame(group_prob = 0.01 , de_prob = c(0.05 , 0.0525) , de_fac = c(1 , 1))
+anno_3 = data.frame(group_prob = 0.025 , de_prob = c(0.005 , 0.0375) , de_fac = c(2 , 1))
+anno_4 = data.frame(group_prob = 0.05 , de_prob = c(0.05 , 0.045) , de_fac = c(0.5 , 0.5))
+anno_5 = data.frame(group_prob = 0.075 , de_prob = c(0.04 , 0.0475) , de_fac = c(0.5 , 0.5))
+anno_6 = data.frame(group_prob = 0.1 , de_prob = c(0.035 , 0.0325) , de_fac = c(0.5 , 0.5))
+anno_7 = data.frame(group_prob = 0.25 , de_prob = c(0.05 , 0.0325) , de_fac = c(0.5 , 0.5))
+anno_8 = data.frame(group_prob = 0.5 , de_prob = c(0.02 , 0.06) , de_fac = c(0.5 , 0.5))
+anno_9 = data.frame(group_prob = 0.75 , de_prob = c(0.04 , 0.0425) , de_fac = c(0.5 , 0.5))
+
+anno = rbind(anno_1 , anno_2 , anno_3 , anno_4 , anno_5 , anno_6 , anno_7 , anno_8 , anno_9)
+
+
+sims_main = bplapply(1:nrow(anno) , function(i){
+  print(i)
+  group_prob = anno$group_prob[i]
+  de_prob = anno$de_prob[i]
+  de_fac = anno$de_fac[i]
+  sim = splatSimulateGroups(params , group.prob = c(group_prob , 1 - group_prob) , de.prob = c(de_prob,0) ,
+                            batchCells = rep(5000,1,10) , de.facLoc = de_fac, batch.rmEffect = T, verbose = F)
+  sim$Batch_Group = paste0(sim$Batch , "_" , sim$Group)
+  sim = SingleCellExperiment(list(counts = counts(sim)),
+                           colData = colData(sim),
+                           rowData = rowData(sim) )
+  sim = logNormCounts(sim)
+  sim = add_batch_corrected_pca(sim)
+  set.seed(32)
+  umaps = as.data.frame(uwot::umap(reducedDim(sim, "pca.corrected") , min_dist = 0.7))
+  reducedDim(sim , "umaps") = umaps
+  sim$group_prob = group_prob
+  sim$de_prob = de_prob
+  sim$de_fac = de_fac
+  sim$type = sapply(sim$Batch , function(x) ifelse(x %in% paste0("Batch" , c(1,3,5,7,9)) , "reference" , "query"))
+  saveRDS(sim , paste0(root.dir , "data/processed/benchmark/discrete/no_batch/sims_main/control/id_", i, ".Rds"))
+  return(NULL)
+} , BPPARAM = mcparam)
+
+
+
+```
+
+## Confirm that they are suitable simulations - nhood graph to show that groups are not cpmpletely separable
+
+```{r plot-milo-groups, message = FALSE}
+
+
+cols = c("burlywood2" , "firebrick3")
+names(cols) = c("Group2" , "Group1")
+
+plots = bplapply(1:nrow(anno) , function(i){
+  sim = readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/sims_main/control/id_", i, ".Rds"))
+  sce_milo = assign_neighbourhoods(sim , reducedDim_name = "pca.corrected" , k = 20 , order = 2)
+  nhood_stat = data.frame(Nhood = c(1:ncol(nhoods(sce_milo))))
+  nhood_stat = annotateNhoods(sce_milo , nhood_stat , coldata_col = "Group")
+  umaps = as.data.frame(reducedDim(sim , "umaps"))
+  umaps = cbind(umaps , as.data.frame(colData(sim)))
+  p1 = ggplot(umaps , aes(x = V1 , y = V2 , col = Group)) +
+    geom_point(size = 0.5 , alpha = 0.75) +
+    theme_bw() +
+    scale_color_manual(values = cols) +
+    labs(x = "UMAP-1" , y = "UMAP-2") +
+    guides(colour = guide_legend(override.aes = list(size=3)))
+  p2 = plot_milo_by_single_metric(sce_milo , nhood_stat , colour_by = "Group_fraction" , layout = "umaps") +
+    scale_fill_viridis(discrete = F , name = "Group\nfraction") +
+    labs(x = "UMAP-1" , y = "UMAP-2")
+  p = ggarrange(p1,p2)
+  ggsave(filename = paste0(figures.dir, "no_batch/sims_main_umaps/id_", i, ".png"), plot = p, width = 9, height = 4)
+  return(NULL)
+}, BPPARAM = mcparam)
+
+
+
+```
+
+
+## Add perturbation to one group - create DE between conditions
+
+### Helper functions
+
+```{r add-perturbation-functions, message = FALSE}
+
+
+select_potential_candidates = function(sim , n_genes_potential = 100){
+  rowdata = as.data.frame(rowData(sim))
+  genes = which(rowdata$DEFacGroup1 == 1 & rowdata$DEFacGroup2 == 1)
+  genes = rowdata$Gene[sample(genes , n_genes_potential)]
+  return(genes)
+}
+
+add_simulated_counts <- function(sim, gene, frac_cells_change = 1, range = c(0,3)){
+  counts = counts(sim)
+  current.counts = counts[gene, ]
+  idx_2_change = which(sim$type == "query" & sim$Group == "Group1")
+  idx_2_change = sample(idx_2_change , round(length(idx_2_change)*frac_cells_change))
+  current.counts[idx_2_change] = current.counts[idx_2_change] + floor(runif(length(idx_2_change), min=range[1], max=(range[2]+1)))
+  counts[gene, ] = current.counts
+  counts(sim) = counts
+  return(sim)
+}
+
+get_de_genes_bulk = function(sce){ 
+  require(tibble) 
+  require(edgeR) 
+  summed = summarizeAssayByGroup(counts(sce), colData(sce)[,c("Batch","type")]) 
+  summed$type = factor(summed$type  , levels = c("reference" , "query"))
+  y <- DGEList(assay(summed, "sum"), samples=colData(summed), lib.size = colSums(assay(summed , "sum"))) 
+  # select genes 
+  #keep <- filterByExpr(y, group=summed$Batch , min.count = 1 , min.total.count = 1) 
+  #y <- y[keep,] 
+  y <- calcNormFactors(y) 
+  design <- model.matrix(~ factor(type), y$samples) 
+  y <- estimateDisp(y, design) 
+  fit <- glmQLFit(y, design, robust=TRUE) 
+  res <- glmQLFTest(fit, coef=ncol(design)) 
+  out = topTags(res, n = Inf ) 
+  out = as.data.frame(out) 
+  out = rownames_to_column(out , var = "Gene") 
+  return(out)
+}
+
+
+```
+
+### Add perturbations
+
+```{r add-perturbation, message = FALSE}
+
+
+n_genes_perturbed = 50
+n_genes_potential = 200
+lfc_thresh.low = 1
+lfc_thresh.high = 5
+
+library(stringr)
+
+sims_updated = bplapply(1:nrow(anno) , function(i){
+  sim_original = readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/sims_main/control/id_", i, ".Rds"))
+  genes_potential = select_potential_candidates(sim_original , n_genes_potential = n_genes_potential)
+  sim_perturbed = sim_original
+  for (gene in genes_potential){
+    sim_perturbed = add_simulated_counts(sim_perturbed, gene = gene )
+  }
+  # check overall DE
+  de_bulk = get_de_genes_bulk(sim_perturbed[, sim_perturbed$Group == "Group1"])
+  de_bulk = de_bulk[de_bulk$Gene %in% genes_potential , ]
+  genes_approp = de_bulk$Gene[de_bulk$logFC >= lfc_thresh.low & de_bulk$logFC <= lfc_thresh.high]
+  set.seed(32)
+  genes_approp = sample(genes_approp , n_genes_perturbed)
+  counts(sim_original)[genes_approp, ] = counts(sim_perturbed)[genes_approp, ]
+  sim_original = scuttle::logNormCounts(sim_original)
+
+  # add DE to rowdata
+  de_genes_target = get_de_genes_bulk(sim_original[,sim_original$Group == "Group1"])
+  de_genes_target = de_genes_target[ , c("Gene" , "logFC" , "PValue" , "FDR")]
+  colnames(de_genes_target) = c("Gene" , "logFC_target" , "PValue_target" , "FDR_target")
+  de_genes_all = get_de_genes_bulk(sim_original)
+  de_genes_all = de_genes_all[ , c("Gene" , "logFC" , "PValue" , "FDR")]
+  colnames(de_genes_all) = c("Gene" , "logFC_all" , "PValue_all" , "FDR_all")
+
+  de_genes = merge(de_genes_target , de_genes_all , all.x = T , all.y = T)
+  de_genes$gene_perturbed = sapply(de_genes$Gene , function(x) ifelse(x %in% genes_approp , T , F))
+  de_genes$id = sapply(de_genes$Gene , function(x) as.numeric(str_remove(x , "Gene")))
+  de_genes = de_genes[order(de_genes$id) , ]
+  rowdata = as.data.frame(rowData(sim_original))
+  rowdata = cbind(rowdata , de_genes[ , c("gene_perturbed" , "logFC_target" , "PValue_target" , "FDR_target" , "logFC_all" , "PValue_all" , "FDR_all")])
+  rowData(sim_original) = DataFrame(rowdata)
+  saveRDS(sim_original , paste0(root.dir , "data/processed/benchmark/discrete/no_batch/sims_main/perturbed/id_", i, ".Rds"))
+  return(NULL)
+} , BPPARAM = mcparam)
+
+
+
+```
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

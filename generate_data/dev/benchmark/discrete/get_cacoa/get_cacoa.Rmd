@@ -1,0 +1,172 @@
+---
+title: "Get Cacoa stat for simulations"
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+
+```{r load, message = FALSE}
+
+
+library(SingleCellExperiment)
+library(batchelor)
+library(stats)
+library(Matrix)
+library(splatter)
+library(BiocParallel)
+library(BiocNeighbors)
+library(BiocSingular)
+library(pROC)
+library(ggplot2)
+library(ggpubr)
+library(scuttle)
+library(miloDE)
+library(miloR)
+library(viridis)
+library(Seurat)
+library(SeuratObject)
+library(cacoa)
+
+ncores = 13
+
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+
+set.seed(32)
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+
+
+```
+
+
+# No batch
+
+## Set anno
+
+```{r set-anno, message = FALSE}
+
+
+# anno for sims
+anno_1 = data.frame(group_prob = 0.005 , de_prob = c(0.04 , 0.07) , de_fac = c(1.6 , 1.2))
+anno_2 = data.frame(group_prob = 0.01 , de_prob = c(0.05 , 0.0525) , de_fac = c(1 , 1))
+anno_3 = data.frame(group_prob = 0.025 , de_prob = c(0.005 , 0.0375) , de_fac = c(2 , 1))
+anno_4 = data.frame(group_prob = 0.05 , de_prob = c(0.05 , 0.045) , de_fac = c(0.5 , 0.5))
+anno_5 = data.frame(group_prob = 0.075 , de_prob = c(0.04 , 0.0475) , de_fac = c(0.5 , 0.5))
+anno_6 = data.frame(group_prob = 0.1 , de_prob = c(0.035 , 0.0325) , de_fac = c(0.5 , 0.5))
+anno_7 = data.frame(group_prob = 0.25 , de_prob = c(0.05 , 0.0325) , de_fac = c(0.5 , 0.5))
+anno_8 = data.frame(group_prob = 0.5 , de_prob = c(0.02 , 0.06) , de_fac = c(0.5 , 0.5))
+anno_9 = data.frame(group_prob = 0.75 , de_prob = c(0.04 , 0.0425) , de_fac = c(0.5 , 0.5))
+anno_sim = rbind(anno_1 , anno_2 , anno_3 , anno_4 , anno_5 , anno_6 , anno_7 , anno_8 , anno_9)
+
+
+
+
+for (i in 1:nrow(anno_sim)){
+  if (!dir.exists(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/cacoa_de/id_",i))){
+    dir.create(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/cacoa_de/id_",i))
+  }
+  if (!dir.exists(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/cacoa_de_proc/id_",i))){
+    dir.create(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/cacoa_de_proc/id_",i))
+  }
+}
+
+anno_samples_k = expand.grid(sample_id = c(1:4) , k = c(25 , 50, 100, 200))
+
+anno = lapply(1:nrow(anno_samples_k) , function(i) {
+  out = anno_sim
+  out$sim_id = 1:nrow(anno_sim)
+  out$sample_id = anno_samples_k$sample_id[i]
+  out$k = anno_samples_k$k[i]
+  return(out)
+})
+anno = do.call(rbind , anno)
+
+samples_grid = data.frame(n_samples_reference = c(2,2,5,5) , n_samples_query = c(2,5,2,5))
+
+
+```
+
+## Get cacoa
+
+```{r get-cacoa, message = FALSE}
+
+
+get_cacoa = function(sim , k){
+  ref.level = "reference"
+  target.level = "query"
+  embedding = reducedDim(sim , "pca.corrected")
+  
+  seurat = CreateSeuratObject(counts = as.matrix(counts(sim)))
+  seurat[["RNA"]]@data = as.matrix(logcounts(sim))
+  seurat[["pca.corrected"]] <- CreateDimReducObject(embeddings = reducedDim(sim , "pca.corrected"), key = "x_")
+  seurat = FindNeighbors(seurat , reduction = "pca.corrected" , dims = 1:10 , k.param = k)
+  seurat = AddMetaData(seurat , as.character(sim$type) , col.name = "sample.groups")
+  seurat = AddMetaData(seurat , sim$Group , col.name = "cell.groups")
+  seurat = AddMetaData(seurat , sim$Batch , col.name = "sample.per.cell")
+  
+  sample.groups = seurat$sample.groups
+  names(sample.groups) = sim$Batch
+  cao <- Cacoa$new(seurat, sample.groups=sample.groups, cell.groups=seurat$cell.groups, sample.per.cell=seurat$sample.per.cell,
+                     ref.level=ref.level, target.level=target.level, graph.name="RNA_nn", embedding = embedding)
+  cao$plot.params <- list(size=0.1, alpha=0.1, font.size=c(2, 3))
+  cao$plot.theme <- cao$plot.theme + theme(legend.background=element_blank())
+  
+  de_cacoa = cao$estimateClusterFreeDE(
+    n.top.genes=nrow(sim), min.expr.frac=0, adjust.pvalues=TRUE, smooth=TRUE,
+    verbose=TRUE
+  )
+  de_cacoa_z = t(de_cacoa$z)
+  de_cacoa_z.adj = t(de_cacoa$z.adj)
+  de_cacoa_logfc = t(de_cacoa$lfc)
+  out = list(z = de_cacoa_z , z.adj = de_cacoa_z.adj, logfc = de_cacoa_logfc)
+  return(out)
+}
+
+
+
+samples_grid = data.frame(n_samples_reference = c(2,2,5,5) , n_samples_query = c(2,5,2,5))
+
+cacoa_de.list = bplapply(1:nrow(anno) , function(i){
+  sim_id = anno$sim_id[i]
+  samples_id = anno$sample_id[i]
+  k = anno$k[i]
+  run_sim = file.exists(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/cacoa_de_proc/id_", sim_id , "/" , samples_id , "_" , k, ".Rds"))
+  if (run_sim == T){
+    return(NULL)
+  } else {
+    dummy = 1
+    saveRDS(dummy , paste0(root.dir , "data/processed/benchmark/discrete/no_batch/cacoa_de_proc/id_", sim_id , "/" , samples_id , "_" , k, ".Rds"))
+        
+    sim = readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/sims_main/perturbed/id_", sim_id, ".Rds"))
+    samples_2_throw = c()
+    if (samples_grid$n_samples_reference[samples_id] == 2){
+      samples_2_throw = c(samples_2_throw , c("Batch5" , "Batch7" , "Batch9"))
+    }
+    if (samples_grid$n_samples_query[samples_id] == 2){
+      samples_2_throw = c(samples_2_throw , c("Batch6" , "Batch8" , "Batch10"))
+    }
+    sim = sim[, !sim$Batch %in% samples_2_throw]
+    rowdata = as.data.frame(rowData(sim))
+    genes = rowdata$Gene[rowdata$gene_perturbed == T]
+    out = get_cacoa(sim[genes,] , k)
+    saveRDS(out , paste0(root.dir , "data/processed/benchmark/discrete/no_batch/cacoa_de/id_", sim_id , "/" , "ref_" , samples_grid$n_samples_reference[samples_id] , "_query_" , samples_grid$n_samples_query[samples_id] , "_k_" , k, ".Rds"))
+    return(NULL)
+  }
+} , BPPARAM = mcparam)
+
+
+
+```
+
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

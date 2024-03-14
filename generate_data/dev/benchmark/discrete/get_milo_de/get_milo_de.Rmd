@@ -1,0 +1,148 @@
+---
+title: "Get miloDE stat for simulations"
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+
+```{r load, message = FALSE}
+
+
+library(SingleCellExperiment)
+library(batchelor)
+library(stats)
+library(Matrix)
+library(splatter)
+library(BiocParallel)
+library(BiocNeighbors)
+library(BiocSingular)
+library(pROC)
+library(ggplot2)
+library(ggpubr)
+library(scuttle)
+library(miloDE)
+library(miloR)
+library(viridis)
+
+ncores = 15
+
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+
+set.seed(32)
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+
+
+# set grid 
+anno_assignment = expand.grid( k = c(20,25,30) , order = 2 , round = c(1,2,3,4,5))
+anno_assignment$id = paste0(anno_assignment$k , "_" , anno_assignment$round)
+
+
+```
+
+# No batch
+
+## Set anno
+
+```{r set-anno, message = FALSE}
+
+
+# anno-sim
+anno_1 = data.frame(group_prob = 0.005 , de_prob = c(0.04 , 0.07) , de_fac = c(1.6 , 1.2))
+anno_2 = data.frame(group_prob = 0.01 , de_prob = c(0.05 , 0.0525) , de_fac = c(1 , 1))
+anno_3 = data.frame(group_prob = 0.025 , de_prob = c(0.005 , 0.0375) , de_fac = c(2 , 1))
+anno_4 = data.frame(group_prob = 0.05 , de_prob = c(0.05 , 0.045) , de_fac = c(0.5 , 0.5))
+anno_5 = data.frame(group_prob = 0.075 , de_prob = c(0.04 , 0.0475) , de_fac = c(0.5 , 0.5))
+anno_6 = data.frame(group_prob = 0.1 , de_prob = c(0.035 , 0.0325) , de_fac = c(0.5 , 0.5))
+anno_7 = data.frame(group_prob = 0.25 , de_prob = c(0.05 , 0.0325) , de_fac = c(0.5 , 0.5))
+anno_8 = data.frame(group_prob = 0.5 , de_prob = c(0.02 , 0.06) , de_fac = c(0.5 , 0.5))
+anno_9 = data.frame(group_prob = 0.75 , de_prob = c(0.04 , 0.0425) , de_fac = c(0.5 , 0.5))
+
+anno_sim = rbind(anno_1 , anno_2 , anno_3 , anno_4 , anno_5 , anno_6 , anno_7 , anno_8 , anno_9)
+
+
+for (i in 1:nrow(anno_sim)){
+  dir.create(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/milo_de/id_",i))
+  dir.create(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/milo_de_proc/id_",i))
+}
+
+
+```
+
+
+## Get miloDE
+
+```{r get-milo-de-no-batch, message = FALSE}
+
+
+samples_grid = data.frame(n_samples_reference = c(2,2,5,5) , n_samples_query = c(2,5,2,5))
+
+milo_de.list = lapply(1:nrow(anno_sim) , function(i){
+  milo_de_per_id = lapply(1:nrow(samples_grid) , function(j){
+    run_sim = file.exists(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/milo_de_proc/id_",i , "/" , j , ".Rds"))
+    if (run_sim == T){
+      return(NULL)
+    } else {
+      dummy = 1
+      saveRDS(dummy , paste0(root.dir , "data/processed/benchmark/discrete/no_batch/milo_de_proc/id_",i , "/" , j , ".Rds"))
+      sim = readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/sims_main/perturbed/id_", i, ".Rds"))
+      
+      samples_2_throw = c()
+      if (samples_grid$n_samples_reference[j] == 2){
+        samples_2_throw = c(samples_2_throw , c("Batch5" , "Batch7" , "Batch9"))
+      }
+      if (samples_grid$n_samples_query[j] == 2){
+        samples_2_throw = c(samples_2_throw , c("Batch6" , "Batch8" , "Batch10"))
+      }
+      sim = sim[, !sim$Batch %in% samples_2_throw]
+      
+      
+      # run miloDE
+      stat = lapply(1:nrow(anno_assignment) , function(z){
+        set.seed(anno_assignment$round[z])
+      
+        sim_milo = assign_neighbourhoods(sim , reducedDim_name = "pca.corrected" , k = anno_assignment$k[z] , order = 2)
+        sim_milo$type = factor(sim_milo$type , levels = c("reference" , "query"))
+        milo_de = miloDE::de_test_neighbourhoods(sim_milo , design = ~type , covariates = c("type") , sample_id = "Batch" , output_type = "SCE" , 
+                                             min_count = 0 , min_n_cells_per_sample = 1 , BPPARAM = mcparam , verbose = T)
+        cells_Group1 = sim_milo$Cell[sim_milo$Group == "Group1"]
+        cells_Group2 = sim_milo$Cell[sim_milo$Group == "Group2"]
+        cells_ref = sim_milo$Cell[sim_milo$type == "ref"]
+        cells_query = sim_milo$Cell[sim_milo$type == "query"]
+        nhoods_sim = nhoods(sim_milo)
+        meta = data.frame(n_cells = colSums(nhoods_sim) , 
+                      n_cells_Group1 = colSums(nhoods_sim[rownames(nhoods_sim) %in% cells_Group1 , ]) , 
+                      n_cells_Group2 = colSums(nhoods_sim[rownames(nhoods_sim) %in% cells_Group2 , ]) , 
+                      n_cells_ref = colSums(nhoods_sim[rownames(nhoods_sim) %in% cells_ref , ]) , 
+                      n_cells_query = colSums(nhoods_sim[rownames(nhoods_sim) %in% cells_query , ])
+                      )
+        milo_de$n_cells = meta$n_cells
+        milo_de$n_cells_Group1 = meta$n_cells_Group1
+        milo_de$frac_cells_Group1 = meta$n_cells_Group1 / milo_de$n_cells
+        milo_de$n_cells_Group2 = meta$n_cells_Group2
+        milo_de$n_cells_ref = meta$n_cells_ref
+        milo_de$n_cells_query = meta$n_cells_query
+        return(milo_de)
+      })
+      saveRDS(stat , paste0(root.dir , "data/processed/benchmark/discrete/no_batch/milo_de/id_",i , "/" , "ref_" , samples_grid$n_samples_reference[j] , "_query_" , samples_grid$n_samples_query[j] , ".Rds"))
+      return(NULL)
+    }
+  })
+  return(NULL)
+})
+
+
+```
+
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```

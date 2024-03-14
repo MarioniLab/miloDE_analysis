@@ -1,0 +1,402 @@
+---
+title: "Get AUC stat for miloDE and Cacoa"
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+
+```{r load, message = FALSE}
+
+
+library(SingleCellExperiment)
+library(batchelor)
+library(stats)
+library(Matrix)
+library(splatter)
+library(BiocParallel)
+library(BiocNeighbors)
+library(BiocSingular)
+library(pROC)
+library(ggplot2)
+library(ggpubr)
+library(scuttle)
+library(miloDE)
+library(miloR)
+library(viridis)
+library(Seurat)
+library(SeuratObject)
+library(cacoa)
+library(ROCR)
+library(purrr)
+library(magrittr)
+
+
+ncores = 18
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+
+set.seed(32)
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+
+
+```
+
+# No batch
+
+## Set anno
+
+```{r anno-sim, message = FALSE}
+
+
+ct_specificity.grid = seq(0, 0.5, 0.05)
+
+k_cacoa.grid = c(25,50,100,200)
+
+anno_assignment = expand.grid(k = c(20,25,30) , order = 2 , round = c(1,2,3,4,5))
+anno_assignment$id = paste0(anno_assignment$k , "_" , anno_assignment$round)
+
+anno_1 = data.frame(group_prob = 0.005 , de_prob = c(0.04 , 0.07) , de_fac = c(1.6 , 1.2))
+anno_2 = data.frame(group_prob = 0.01 , de_prob = c(0.05 , 0.0525) , de_fac = c(1 , 1))
+anno_3 = data.frame(group_prob = 0.025 , de_prob = c(0.005 , 0.0375) , de_fac = c(2 , 1))
+anno_4 = data.frame(group_prob = 0.05 , de_prob = c(0.05 , 0.045) , de_fac = c(0.5 , 0.5))
+anno_5 = data.frame(group_prob = 0.075 , de_prob = c(0.04 , 0.0475) , de_fac = c(0.5 , 0.5))
+anno_6 = data.frame(group_prob = 0.1 , de_prob = c(0.035 , 0.0325) , de_fac = c(0.5 , 0.5))
+anno_7 = data.frame(group_prob = 0.25 , de_prob = c(0.05 , 0.0325) , de_fac = c(0.5 , 0.5))
+anno_8 = data.frame(group_prob = 0.5 , de_prob = c(0.02 , 0.06) , de_fac = c(0.5 , 0.5))
+anno_9 = data.frame(group_prob = 0.75 , de_prob = c(0.04 , 0.0425) , de_fac = c(0.5 , 0.5))
+anno_sim = rbind(anno_1 , anno_2 , anno_3 , anno_4 , anno_5 , anno_6 , anno_7 , anno_8 , anno_9)
+anno_sim$sim_id = 1:nrow(anno_sim)
+# select some
+sim_ids = c(2,4,6,8,12,14,16)
+anno_sim = anno_sim[anno_sim$sim_id %in% sim_ids , ]
+
+samples_grid = data.frame(n_samples_reference = c(2,2,5,5) , n_samples_query = c(2,5,2,5))
+
+
+```
+
+## miloDE
+
+### Per nhood
+
+```{r milode-no-batch-nhood, message = FALSE}
+
+
+
+stat_auc = lapply(1:nrow(anno_sim) , function(i){
+  sim_extended = readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/sims_main/perturbed/id_", anno_sim$sim_id[i], ".Rds"))
+  rowdata = as.data.frame(rowData(sim_extended))
+  genes_perturbed = rowdata$Gene[rowdata$gene_perturbed == T]
+  stat_per_sim = lapply(1:nrow(samples_grid) , function(j){
+    samples_2_throw = c()
+    if (samples_grid$n_samples_reference[j] == 2){
+      samples_2_throw = c(samples_2_throw , c("Batch5" , "Batch7" , "Batch9"))
+    }
+    if (samples_grid$n_samples_query[j] == 2){
+      samples_2_throw = c(samples_2_throw , c("Batch6" , "Batch8" , "Batch10"))
+    }
+    sim = sim_extended[, !sim_extended$Batch %in% samples_2_throw]
+
+    # load milo-de
+    milo_de = readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/milo_de/id_",  anno_sim$sim_id[i], "/" , "ref_" , samples_grid$n_samples_reference[j] , "_query_" , samples_grid$n_samples_query[j] , ".Rds"))
+
+    stat_per_milo = bplapply(1:length(milo_de) , function(z){
+      current.milo_de = milo_de[[z]]
+      current.milo_de = current.milo_de[genes_perturbed , ]
+      idx = which(is.na(assay(current.milo_de , "pval_corrected_across_nhoods")))
+      assay(current.milo_de , "pval_corrected_across_nhoods")[idx] = 1
+      vec_frac_cells_Group1 = current.milo_de$frac_cells_Group1
+      stat_per_gene = lapply(rownames(current.milo_de) , function(gene){
+        stat_per_ct_thresh = lapply(ct_specificity.grid , function(ct_specificity.thresh){
+          df = data.frame(response = as.numeric(vec_frac_cells_Group1 > ct_specificity.thresh) , predictor = -log10(as.numeric(assay(current.milo_de[gene , ] , "pval_corrected_across_nhoods"))))
+          if (length(unique(df$response)) == 2){
+            predtest = prediction(df$predictor, df$response)
+            auc = performance(predtest, "auc")
+            out = data.frame(Gene = gene , ct_spec_thresh = ct_specificity.thresh , auc = auc@y.values[[1]])
+          } else {
+            out = data.frame(Gene = gene , ct_spec_thresh = ct_specificity.thresh , auc = NaN)
+          }
+          out = merge(out , rowdata[ , c("Gene" , "logFC_target" , "PValue_target" , "FDR_target")] , all.x = T , all.y = F)
+          return(out)
+        })
+        stat_per_ct_thresh = do.call(rbind , stat_per_ct_thresh)
+        return(stat_per_ct_thresh)
+      })
+      stat_per_gene = do.call(rbind , stat_per_gene)
+      stat_per_gene = cbind(anno_assignment[z,] , stat_per_gene)
+      return(stat_per_gene)
+    } , BPPARAM = mcparam)
+    stat_per_milo = do.call(rbind , stat_per_milo)
+    stat_per_milo$n_samples_ref = samples_grid$n_samples_reference[j]
+    stat_per_milo$n_samples_query = samples_grid$n_samples_query[j]
+    return(stat_per_milo)
+  })
+  stat_per_sim = do.call(rbind , stat_per_sim)
+  stat_per_sim = cbind(anno_sim[i,] , stat_per_sim)
+  return(stat_per_sim)
+
+})
+stat_auc = do.call(rbind , stat_auc)
+saveRDS(stat_auc , file = paste0(root.dir , "data/processed/benchmark/discrete/no_batch/auc/stat_milo_per_nhood.Rds"))
+
+
+
+```
+
+### Per single cell
+
+```{r milode-no-batch-single-cell, message = FALSE}
+
+
+get_stat_per_cell = function(nhoods_sce , milo_de , gene){
+  require(stats)
+  p_across_nhoods = as.numeric(assay(milo_de[gene , ] , "pval_corrected_across_nhoods"))
+  p_across_nhoods[is.na(p_across_nhoods)] = 1
+  stat = lapply(1:nrow(nhoods_sce) , function(i){
+    idx = which(nhoods_sce[i, ] == 1)
+    out = data.frame(z = mean( qnorm(p_across_nhoods[idx] , lower.tail = F) ) )
+    return(out)
+  })
+  stat = do.call(rbind , stat)
+  stat$cell = rownames(nhoods_sce)
+  return(stat)
+}
+
+
+stat_auc = lapply(1:nrow(anno_sim) , function(i){
+  sim_extended = readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/sims_main/perturbed/id_", anno_sim$sim_id[i], ".Rds"))
+  rowdata = as.data.frame(rowData(sim_extended))
+  genes_perturbed = rowdata$Gene[rowdata$gene_perturbed == T]
+  genes_perturbed = genes_perturbed
+  stat_per_sim = lapply(1:nrow(samples_grid) , function(j){
+    samples_2_throw = c()
+    if (samples_grid$n_samples_reference[j] == 2){
+      samples_2_throw = c(samples_2_throw , c("Batch5" , "Batch7" , "Batch9"))
+    }
+    if (samples_grid$n_samples_query[j] == 2){
+      samples_2_throw = c(samples_2_throw , c("Batch6" , "Batch8" , "Batch10"))
+    }
+    sim = sim_extended[, !sim_extended$Batch %in% samples_2_throw]
+
+    # load milo-de
+    milo_de = readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/milo_de/id_",  anno_sim$sim_id[i], "/" , "ref_" , samples_grid$n_samples_reference[j] , "_query_" , samples_grid$n_samples_query[j] , ".Rds"))
+
+    stat_per_milo = lapply(1:length(milo_de) , function(z){
+      print(i)
+      print(j)
+      print(z)
+      current.milo_de = milo_de[[z]]
+      current.milo_de = current.milo_de[genes_perturbed , ]
+      idx = which(is.na(assay(current.milo_de , "pval_corrected_across_nhoods")))
+      assay(current.milo_de , "pval_corrected_across_nhoods")[idx] = 1
+
+      # get sce-milo
+      set.seed(anno_assignment$round[z])
+      sce_milo = miloDE::assign_neighbourhoods(sim , k = anno_assignment$k[z], order = 2 , reducedDim_name = "pca.corrected" , filtering = T)
+      nhoods_sce = nhoods(sce_milo)
+
+      stat_per_gene = bplapply(genes_perturbed , function(gene){
+        z_stat = get_stat_per_cell(nhoods_sce , current.milo_de , gene)
+        df = data.frame(response_all = as.numeric(sim$Group == "Group1") , response_case = as.numeric(sim$Group == "Group1" & sim$type == "query"), predictor_z = z_stat$z )
+
+        auc_all_z = performance(prediction(df$predictor_z, df$response_all), "auc")
+        auc_case_z = performance(prediction(df$predictor_z, df$response_case), "auc")
+        out = data.frame(Gene = c(gene , gene) ,  auc = c(auc_all_z@y.values[[1]] , auc_case_z@y.values[[1]]) , correction = c("raw" , "raw" ) , response_cells = c("all" , "case"))
+
+        out = merge(out , rowdata[ , c("Gene" , "logFC_target" , "PValue_target" , "FDR_target")] , all.x = T , all.y = F)
+        return(out)
+
+      } , BPPARAM = mcparam)
+      stat_per_gene = do.call(rbind , stat_per_gene)
+      stat_per_gene = cbind(anno_assignment[z,] , stat_per_gene)
+      return(stat_per_gene)
+    } )
+    stat_per_milo = do.call(rbind , stat_per_milo)
+    stat_per_milo$n_samples_ref = samples_grid$n_samples_reference[j]
+    stat_per_milo$n_samples_query = samples_grid$n_samples_query[j]
+    return(stat_per_milo)
+  })
+  stat_per_sim = do.call(rbind , stat_per_sim)
+  stat_per_sim = cbind(anno_sim[i,] , stat_per_sim)
+  return(stat_per_sim)
+
+})
+stat_auc = do.call(rbind , stat_auc)
+saveRDS(stat_auc , file = paste0(root.dir , "data/processed/benchmark/discrete/no_batch/auc/stat_milo_per_cell.Rds"))
+
+
+
+```
+
+## Cacoa
+
+### Single-cell
+
+```{r cacoa-no-batch-cell, message = FALSE}
+
+
+anno_samples_k = expand.grid(sample_id = c(1:4) , k_cacoa = k_cacoa.grid)
+anno = lapply(1:nrow(anno_samples_k) , function(i) {
+  out = anno_sim
+  out$sample_id = anno_samples_k$sample_id[i]
+  out$k = anno_samples_k$k[i]
+  return(out)
+})
+anno = do.call(rbind , anno)
+
+
+stat_auc = bplapply(1:nrow(anno) , function(i){
+  sim_id = anno$sim_id[i]
+  samples_id = anno$sample_id[i]
+  k = anno$k[i]
+  sim_extended = readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/sims_main/perturbed/id_", sim_id, ".Rds"))
+  rowdata = as.data.frame(rowData(sim_extended))
+  genes_perturbed = rowdata$Gene[rowdata$gene_perturbed == T]
+  samples_2_throw = c()
+  if (samples_grid$n_samples_reference[samples_id] == 2){
+    samples_2_throw = c(samples_2_throw , c("Batch5" , "Batch7" , "Batch9"))
+  }
+  if (samples_grid$n_samples_query[samples_id] == 2){
+    samples_2_throw = c(samples_2_throw , c("Batch6" , "Batch8" , "Batch10"))
+  }
+  sim = sim_extended[, !sim_extended$Batch %in% samples_2_throw]
+
+  cacoa_de = readRDS( paste0(root.dir , "data/processed/benchmark/discrete/no_batch/cacoa_de/id_", sim_id , "/" , "ref_" , samples_grid$n_samples_reference[samples_id] , "_query_" , samples_grid$n_samples_query[samples_id] , "_k_" , k, ".Rds") )
+  cacoa_de_z = cacoa_de$z
+  cacoa_de_z.adj = cacoa_de$z.adj
+
+  stat_per_gene = lapply(rownames(cacoa_de_z) , function(gene){
+    current.cacoa_de_z = cacoa_de_z[gene , ]
+    current.cacoa_de_z.adj = cacoa_de_z.adj[gene , ]
+    idx = which(!is.na(current.cacoa_de_z))
+    df = data.frame(response_all = as.numeric(sim$Group == "Group1")[idx] , response_case = as.numeric(sim$Group == "Group1" & sim$type == "query")[idx], predictor_z = current.cacoa_de_z[idx] , predictor_z.adj = current.cacoa_de_z.adj[idx] )
+
+    auc_all_z = performance(prediction(df$predictor_z, df$response_all), "auc")
+    auc_all_z.adj = performance(prediction(df$predictor_z.adj, df$response_all), "auc")
+    auc_case_z = performance(prediction(df$predictor_z, df$response_case), "auc")
+    auc_case_z.adj = performance(prediction(df$predictor_z.adj, df$response_case), "auc")
+    out = data.frame(Gene = c(gene , gene) ,  auc = c(auc_all_z@y.values[[1]] , auc_all_z.adj@y.values[[1]] , auc_case_z@y.values[[1]] , auc_case_z.adj@y.values[[1]]) , correction = c("raw" , "adj" , "raw" , "adj") , response_cells = c("all" , "all" , "case" , "case"))
+
+    return(out)
+  })
+  stat_per_gene = do.call(rbind , stat_per_gene)
+  stat_per_gene = merge(stat_per_gene , rowdata[ , c("Gene" , "logFC_target" , "PValue_target" , "FDR_target")] , all.x = T , all.y = F)
+  stat_per_gene$n_samples_reference = samples_grid$n_samples_reference[samples_id]
+  stat_per_gene$n_samples_query = samples_grid$n_samples_query[samples_id]
+  stat_per_gene = cbind(anno[i, ] , stat_per_gene)
+} , BPPARAM = mcparam)
+stat_auc = do.call(rbind , stat_auc)
+saveRDS(stat_auc , file = paste0(root.dir , "data/processed/benchmark/discrete/no_batch/auc/stat_cacoa_per_cell.Rds"))
+
+
+
+```
+
+### Nhood approach
+
+```{r cacoa-nhood-approach-no-batch, message = FALSE}
+
+
+assign_cacoa_into_nhoods = function(sce_milo , z_vec , z.adj_vec){
+  nhoods_sce = nhoods(sce_milo)
+  nhoods_stat = lapply(1:ncol(nhoods_sce) , function(i){
+    idx = which(nhoods_sce[,i] == 1)
+    out = data.frame(Nhood = i, z = mean(z_vec[idx] , na.rm = T) , z.adj_vec = mean(z.adj_vec[idx] , na.rm = T))
+    return(out)
+  })
+  nhoods_stat = do.call(rbind , nhoods_stat)
+  nhoods_stat = nhoods_stat[order(nhoods_stat$Nhood) , ]
+  return(nhoods_stat)
+}
+
+
+stat_auc = lapply(1:nrow(anno_sim) , function(i){
+  print(i)
+  sim_extended = readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/sims_main/perturbed/id_", anno_sim$sim_id[i], ".Rds"))
+  rowdata = as.data.frame(rowData(sim_extended))
+  genes_perturbed = rowdata$Gene[rowdata$gene_perturbed == T]
+  stat_per_sim = lapply(1:nrow(samples_grid) , function(j){
+    print(j)
+    samples_2_throw = c()
+    if (samples_grid$n_samples_reference[j] == 2){
+      samples_2_throw = c(samples_2_throw , c("Batch5" , "Batch7" , "Batch9"))
+    }
+    if (samples_grid$n_samples_query[j] == 2){
+      samples_2_throw = c(samples_2_throw , c("Batch6" , "Batch8" , "Batch10"))
+    }
+    sim = sim_extended[, !sim_extended$Batch %in% samples_2_throw]
+
+    # load milo-de
+    milo_de = readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/milo_de/id_",  anno_sim$sim_id[i] , "/" , "ref_" , samples_grid$n_samples_reference[j] , "_query_" , samples_grid$n_samples_query[j] , ".Rds"))
+    stat_per_milo = lapply(c(2,5,8,11,14) , function(z){
+      print(z)
+      # load milo-de to get correct response
+      current.milo_de = milo_de[[z]]
+      vec_frac_cells_Group1 = current.milo_de$frac_cells_Group1
+        
+      # get sce-milo to assign single cells to nhoods
+      set.seed(anno_assignment$round[z])
+      sce_milo = miloDE::assign_neighbourhoods(sim , k = anno_assignment$k[z], order = 2 , reducedDim_name = "pca.corrected" , filtering = T)
+      
+        
+      stat_per_k = lapply(k_cacoa.grid , function(k){
+        cacoa_de = readRDS( paste0(root.dir , "data/processed/benchmark/discrete/no_batch/cacoa_de/id_",  anno_sim$sim_id[i] , "/" , "ref_" , samples_grid$n_samples_reference[j] , "_query_" , samples_grid$n_samples_query[j] , "_k_" , k, ".Rds") )
+        cacoa_de_z = cacoa_de$z
+        cacoa_de_z.adj = cacoa_de$z.adj
+        
+        stat_per_gene = bplapply(genes_perturbed , function(gene){
+          current.cacoa_de_z = cacoa_de_z[gene , ]
+          current.cacoa_de_z.adj = cacoa_de_z.adj[gene , ]
+          cacoa_nhoods_stat = assign_cacoa_into_nhoods(sce_milo , current.cacoa_de_z , current.cacoa_de_z.adj)
+          
+          stat_per_ct_thresh = lapply(ct_specificity.grid , function(ct_specificity.thresh){
+            df = data.frame(response = as.numeric(current.milo_de$frac_cells_Group1 > ct_specificity.thresh) , predictor_z = cacoa_nhoods_stat$z , predictor_z.adj = cacoa_nhoods_stat$z.adj)
+            if (length(unique(df$response)) == 2){
+              auc_z = performance(prediction(df$predictor_z, df$response), "auc")
+              out_z = data.frame(Gene = gene , ct_spec_thresh = ct_specificity.thresh , auc = auc_z@y.values[[1]] , correction = "raw")
+              auc_z.adj = performance(prediction(df$predictor_z.adj, df$response), "auc")
+              out_z.adj = data.frame(Gene = gene , ct_spec_thresh = ct_specificity.thresh , auc = auc_z.adj@y.values[[1]] , correction = "adj")
+              out = rbind(out_z , out_z.adj)
+            } else {
+              out = data.frame(Gene = c(gene,gene) , ct_spec_thresh = c(ct_specificity.thresh,ct_specificity.thresh) , auc = c(NaN,NaN) , correction = c("raw" , "adj"))
+            }
+            out = merge(out , rowdata[ , c("Gene" , "logFC_target" , "PValue_target" , "FDR_target")] , all.x = T , all.y = F)
+            return(out)
+          })
+          stat_per_ct_thresh = do.call(rbind , stat_per_ct_thresh)
+          return(stat_per_ct_thresh)
+        } , BPPARAM = mcparam)
+        stat_per_gene = do.call(rbind , stat_per_gene)
+        stat_per_gene = cbind(anno_assignment[z,] , stat_per_gene)
+        stat_per_gene$k_cacoa = k
+        return(stat_per_gene)
+      })
+      stat_per_k = do.call(rbind , stat_per_k)
+      return(stat_per_k)
+    })
+    stat_per_milo = do.call(rbind , stat_per_milo)
+    stat_per_milo$n_samples_ref = samples_grid$n_samples_reference[j]
+    stat_per_milo$n_samples_query = samples_grid$n_samples_query[j]
+    return(stat_per_milo)
+  })
+  stat_per_sim = do.call(rbind , stat_per_sim)
+  stat_per_sim = cbind(anno_sim[i,] , stat_per_sim)
+  return(stat_per_sim)
+
+})
+stat_auc = do.call(rbind , stat_auc)
+saveRDS(stat_auc , file = paste0(root.dir , "data/processed/benchmark/discrete/no_batch/auc/stat_cacoa_per_nhood.Rds"))
+
+
+```
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```
