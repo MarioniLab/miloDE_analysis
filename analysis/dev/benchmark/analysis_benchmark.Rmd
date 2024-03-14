@@ -1,0 +1,708 @@
+---
+title: "Analysis - benchmark against Cacoa and pseudo-bulk DE"
+output:
+  BiocStyle::html_document:
+    code_folding: hide
+    number_sections: yes
+    toc: yes  
+---
+# Load dependencies
+
+
+```{r load, message = FALSE}
+
+library(SingleCellExperiment)
+library(batchelor)
+library(stats)
+library(Matrix)
+library(splatter)
+library(BiocParallel)
+library(BiocNeighbors)
+library(BiocSingular)
+library(pROC)
+library(ggplot2)
+library(ggpubr)
+library(scuttle)
+library(miloDE)
+library(miloR)
+library(cacoa)
+library(ROCR)
+
+ncores = 5
+mcparam = MulticoreParam(workers = ncores)
+register(mcparam)
+
+set.seed(32)
+
+root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
+figures.dir = paste0(root.dir , "figures/benchmark/discrete/no_batch/")
+
+
+```
+
+# Load anno and data
+
+```{r load-anno, message = FALSE}
+
+
+anno_1 = data.frame(group_prob = 0.005 , de_prob = c(0.04 , 0.07) , de_fac = c(1.6 , 1.2))
+anno_2 = data.frame(group_prob = 0.01 , de_prob = c(0.05 , 0.0525) , de_fac = c(1 , 1))
+anno_3 = data.frame(group_prob = 0.025 , de_prob = c(0.005 , 0.0375) , de_fac = c(2 , 1))
+anno_4 = data.frame(group_prob = 0.05 , de_prob = c(0.05 , 0.045) , de_fac = c(0.5 , 0.5))
+anno_5 = data.frame(group_prob = 0.075 , de_prob = c(0.04 , 0.0475) , de_fac = c(0.5 , 0.5))
+anno_6 = data.frame(group_prob = 0.1 , de_prob = c(0.035 , 0.0325) , de_fac = c(0.5 , 0.5))
+anno_7 = data.frame(group_prob = 0.25 , de_prob = c(0.05 , 0.0325) , de_fac = c(0.5 , 0.5))
+anno_8 = data.frame(group_prob = 0.5 , de_prob = c(0.02 , 0.06) , de_fac = c(0.5 , 0.5))
+anno_9 = data.frame(group_prob = 0.75 , de_prob = c(0.04 , 0.0425) , de_fac = c(0.5 , 0.5))
+anno_sim = rbind(anno_1 , anno_2 , anno_3 , anno_4 , anno_5 , anno_6 , anno_7 , anno_8 , anno_9)
+anno_sim$sim_id = 1:nrow(anno_sim)
+sim_ids = c(2,4,6,8,12,14,16)
+anno_sim = anno_sim[anno_sim$sim_id %in% sim_ids , ]
+
+samples_grid = data.frame(n_samples_reference = c(2,2,5,5) , n_samples_query = c(2,5,2,5))
+samples_grid$sample_id = 1:nrow(samples_grid)
+
+
+select_genes = function(rowdata , breaks = seq(1,5,0.5)){
+  rowdata = rowdata[order(rowdata$logFC_target) , ]
+  selected_rowdata = lapply(breaks , function(lfc){
+    vec = abs(rowdata$logFC_target - lfc)
+    idx = which(vec == min(vec))
+    idx = idx[1]
+    return(rowdata[idx , ])
+  })
+  selected_rowdata = do.call(rbind , selected_rowdata)
+  selected_rowdata = unique(selected_rowdata)
+  return(selected_rowdata$Gene)
+}
+
+filter_genes = function(stat){
+  #stat = merge(stat , anno_sim , by = c("group_prob" , "de_prob" , "de_fac") , all.x = T) 
+  ids = sort(unique(stat$sim_id))
+  stat = lapply(ids , function(sim_id){
+    current.stat = stat[stat$sim_id == sim_id , ]
+    sim = readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/sims_main/perturbed/id_", sim_id, ".Rds"))
+    rowdata = as.data.frame(rowData(sim))
+    rowdata = rowdata[rowdata$gene_perturbed == T , ]
+    genes = select_genes(rowdata)
+    current.stat = current.stat[current.stat$Gene %in% genes , ]
+    return(current.stat)
+  })
+  stat = do.call(rbind , stat)
+  return(stat)
+}
+
+stat_milo_per_cell = filter_genes( readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/auc/stat_milo_per_cell.Rds")) )
+stat_milo_per_nhood = filter_genes( readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/auc/stat_milo_per_nhood.Rds")) )
+stat_cacoa_per_cell = filter_genes( readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/auc/stat_cacoa_per_cell.Rds")) )
+stat_cacoa_per_nhood = filter_genes( readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/auc/stat_cacoa_per_nhood.Rds")) )
+
+
+```
+
+
+# Cartoon figures
+
+## Get UMAP - by CT
+
+```{r 4-cartoon-get-umap, message = FALSE}
+
+
+sim_id = 12
+gene = "Gene1300"
+cols = c("burlywood2" , "firebrick3")
+names(cols) = c(F , T)
+
+get_umap_by_ct = function(sim_id){
+  sim = readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/sims_main/control/id_", sim_id, ".Rds"))
+  sim = sim[, sim$Batch %in% c("Batch1" , "Batch2" , "Batch3" , "Batch4")]
+  set.seed(1)
+  
+  umaps = as.data.frame(reducedDim(sim , "umaps"))
+  umaps = cbind(umaps , as.data.frame(colData(sim)))
+  umaps = umaps[order(umaps$Group , decreasing = T) , ]
+  umaps$perturbed_group = sapply(umaps$Group , function(x) ifelse(x == "Group1" , T , F))
+  umaps$type = sapply(umaps$type , function(x) ifelse(x == "reference" , "control" , "case"))
+  umaps$type = factor(umaps$type , levels = c("control" , "case"))
+  p1 = ggplot(umaps , aes(x = V1 , y = V2 , col = perturbed_group)) +
+    geom_point(size = 0.35 , alpha = 0.75) +
+    theme_bw() +
+    scale_color_manual(values = cols , name = "Perturbed group") +
+    labs(x = "UMAP-1" , y = "UMAP-2") +
+    guides(colour = guide_legend(override.aes = list(size=3))) +
+    facet_wrap(~type) +
+    theme(legend.position = "top")
+  return(p1)
+}
+
+p = get_umap_by_ct(sim_id)
+p
+ggsave(filename = paste0(figures.dir, "auc_cartoon/umap_by_cts" , ".png"), plot = p, width = 4.5, height = 3)
+
+
+get_nhood_by_ct = function(sim_id){
+  sim = readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/sims_main/control/id_", sim_id, ".Rds"))
+  sim = sim[, sim$Batch %in% c("Batch1" , "Batch2" , "Batch3" , "Batch4")]
+  set.seed(1)
+  sce_milo = assign_neighbourhoods(sim , reducedDim_name = "pca.corrected" , k = 20 , order = 2)
+  
+  nhood_stat = data.frame(Nhood = c(1:ncol(nhoods(sce_milo))))
+  nhood_stat = annotateNhoods(sce_milo , nhood_stat , coldata_col = "Group")
+  nhood_stat$frac_Group1 = sapply(1:nrow(nhood_stat) , function(i) ifelse(nhood_stat$Group[i] == "Group1" , nhood_stat$Group_fraction[i] , 1 - nhood_stat$Group_fraction[i]))
+  
+  p2 = miloDE::plot_milo_by_single_metric(sce_milo , nhood_stat = nhood_stat , colour_by = "frac_Group1" , layout = "umaps" , edge_weight.thresh = 50) +
+    scale_fill_gradient2(low = "burlywood2" , high = "firebrick3" , name = "Fraction of\nperturbed cells") 
+  return(p2)
+}
+p = get_nhood_by_ct(sim_id)
+p
+ggsave(filename = paste0(figures.dir, "auc_cartoon/nhood_by_cts" , ".png"), plot = p, width = 5.5, height = 4)
+
+
+
+```
+
+## Get UMAP - by perturbed gene
+
+```{r 4-cartoon-umap-perturbed-gene, message = FALSE}
+
+get_umap_by_gene = function(sim_id , gene){
+  sim = readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/sims_main/perturbed/id_", sim_id, ".Rds"))
+  sim = sim[, sim$Batch %in% c("Batch1" , "Batch2" , "Batch3" , "Batch4")]
+  umaps = as.data.frame(reducedDim(sim , "umaps"))
+  umaps = cbind(umaps , as.data.frame(colData(sim)))
+  umaps$logcounts = as.numeric(logcounts(sim[gene , ]))
+  umaps = umaps[order(umaps$logcounts) , ]
+  umaps$perturbed_group = sapply(umaps$Group , function(x) ifelse(x == "Group1" , T , F))
+  umaps$type = sapply(umaps$type , function(x) ifelse(x == "reference" , "control" , "case"))
+  umaps$type = factor(umaps$type , levels = c("control" , "case"))
+  
+  p = ggplot(umaps , aes(x = V1 , y = V2 , col = logcounts)) +
+    geom_point(size = 0.35 , alpha = 1) +
+    theme_bw() +
+    scale_color_viridis(discrete = F , name = "logcounts") +
+    labs(x = "UMAP-1" , y = "UMAP-2") +
+    facet_wrap(~type ) +
+    theme(legend.position = "top")
+  return(p)
+  
+}
+
+p = get_umap_by_gene(sim_id , gene = gene)
+p
+ggsave(filename = paste0(figures.dir, "auc_cartoon/umap_by_gene_counts" , ".png"), plot = p, width = 4.5, height = 3)
+
+
+
+```
+
+## z distribution - Cacoa
+
+```{r 4-cartoon-z-cacoa, message = FALSE}
+
+
+
+get_cacoa_z_plot = function(sim_id , gene , type = "raw"){
+  sim = readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/sims_main/perturbed/id_", sim_id, ".Rds"))
+  sim = sim[, sim$Batch %in% c("Batch1" , "Batch2" , "Batch3" , "Batch4")]
+  k = 50
+  cacoa_de = readRDS( paste0(root.dir , "data/processed/benchmark/discrete/no_batch/cacoa_de/id_", sim_id , "/" , "ref_" , 2 , "_query_" , 2 , "_k_" , k, ".Rds") )
+  if (type == "raw"){
+    df = data.frame(logFC = cacoa_de$logfc[gene , ] , z = cacoa_de$z[gene , ])
+  } else if (type == "adj"){
+    df = data.frame(logFC = cacoa_de$logfc[gene , ] , z = cacoa_de$z.adj[gene , ])
+  }
+  df = cbind(df , as.data.frame(colData(sim)))
+  df = cbind(df , as.data.frame(reducedDim(sim , "umaps")))
+  df$type = sapply(df$type , function(x) ifelse(x == "reference" , "control" , "case"))
+  df$type = factor(df$type , levels = c("control" , "case"))
+  df = df[order(df$z) , ]
+  
+  p = ggplot(df , aes(x = V1 , y = V2 , col = z)) +
+    geom_point(size = 0.5 , alpha = 1) +
+    theme_bw() +
+    scale_color_viridis(discrete = F) +
+    labs(x = "UMAP-1" , y = "UMAP-2") +
+    #facet_wrap(~type) +
+    theme(legend.position = "top")
+  return(p)
+}
+
+p = get_cacoa_z_plot(sim_id , gene)
+p
+ggsave(filename = paste0(figures.dir, "auc_cartoon/cacoa_z" , ".png"), plot = p, width = 2, height = 3)
+
+p = get_cacoa_z_plot(sim_id , gene , type = "adj")
+p
+ggsave(filename = paste0(figures.dir, "auc_cartoon/cacoa_z_adj" , ".png"), plot = p, width = 2, height = 3)
+
+
+
+```
+
+## miloDE - corrected p-value
+
+```{r 4-cartoon-milode-p, message = FALSE}
+
+get_milo_p_plot = function(sim_id , gene){
+  sim = readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/sims_main/perturbed/id_", sim_id, ".Rds"))
+  sim = sim[, sim$Batch %in% c("Batch1" , "Batch2" , "Batch3" , "Batch4")]
+  
+  # load sce-milo
+  set.seed(1)
+  sce_milo = assign_neighbourhoods(sim , reducedDim_name = "pca.corrected" , k = 20 , order = 2)
+  milo_de = readRDS( paste0(root.dir , "data/processed/benchmark/discrete/no_batch/milo_de/id_", sim_id , "/" , "ref_" , 2 , "_query_" , 2, ".Rds") )
+  milo_de = milo_de[[1]]
+  milo_de = convert_de_stat(milo_de[gene , ])
+  milo_de$log10_pval = -log10(milo_de$pval_corrected_across_nhoods)
+  
+  p = miloDE::plot_milo_by_single_metric(sce_milo , milo_de , colour_by = "log10_pval" , layout = "umaps" , edge_weight.thresh = 25) + 
+    scale_fill_gradient2(low = "gainsboro" , high = "deeppink4" , name = "-log10(corrected\np-value)")
+  p
+  return(p)
+}
+
+p = get_milo_p_plot(sim_id , gene)
+p
+ggsave(filename = paste0(figures.dir, "auc_cartoon/miloDE_p" , ".png"), plot = p, width = 6, height = 4)
+
+
+
+```
+# Analysis
+
+## Against Cacoa
+
+### Neighbourhood level 
+
+```{r auc-cacoa-nhood-level, message = FALSE}
+
+# aggregate cacoa
+stat_cacoa_per_nhood_agg = as.data.frame(stat_cacoa_per_nhood %>% group_by(group_prob , de_prob , de_fac , sim_id , k , order , round , id , Gene , ct_spec_thresh , correction , logFC_target , PValue_target , FDR_target , n_samples_ref , n_samples_query) %>% dplyr::summarise(auc = mean(auc , na.rm = T)))
+colnames(stat_cacoa_per_nhood_agg)[colnames(stat_cacoa_per_nhood_agg) == "correction"] = "type"
+stat_cacoa_per_nhood_agg$type = paste0("Cacoa_" , stat_cacoa_per_nhood_agg$type)
+stat_cacoa_per_nhood_agg = stat_cacoa_per_nhood_agg[stat_cacoa_per_nhood_agg$k == 25 , ]
+
+stat_milo_per_nhood_agg = stat_milo_per_nhood
+stat_milo_per_nhood_agg$type = paste0("miloDE_" , stat_milo_per_nhood_agg$k)
+
+stat_per_nhood = rbind(stat_cacoa_per_nhood_agg[,c("group_prob" , "de_prob" , "de_fac" , "sim_id" , "type", "round" , "Gene" , "ct_spec_thresh" , "logFC_target" , "n_samples_ref" , "n_samples_query" , "auc")] , 
+                       stat_milo_per_nhood_agg[,c("group_prob" , "de_prob" , "de_fac" , "sim_id" , "type", "round" , "Gene" , "ct_spec_thresh" , "logFC_target" , "n_samples_ref" , "n_samples_query" , "auc")])
+
+stat_per_nhood_agg = as.data.frame(stat_per_nhood %>% group_by(group_prob , de_prob , de_fac , sim_id , type , Gene , logFC_target , ct_spec_thresh , n_samples_ref , n_samples_query) %>% dplyr::summarise(auc = mean(auc , na.rm = T)))
+stat_per_nhood_agg$type = factor(stat_per_nhood_agg$type , levels = c("miloDE_20" , "miloDE_25" , "miloDE_30" , "Cacoa_raw" , "Cacoa_adj"))
+stat_per_nhood_agg$sample_id_plot = paste0(stat_per_nhood_agg$n_samples_ref , " control, " , stat_per_nhood_agg$n_samples_query , " case")
+stat_per_nhood_agg$group_prob_plot = sapply(stat_per_nhood_agg$group_prob , function(x) paste0(x * 100 , "%"))
+stat_per_nhood_agg = stat_per_nhood_agg[stat_per_nhood_agg$ct_spec_thresh %in% c(0.1 , 0.25) , ]
+
+
+cols_types = c( met.brewer("Egypt" , n = 4)[c(1,3,4)] , "gray75" , "gray25")
+
+plots = lapply(sort(unique(stat_per_nhood_agg$sim_id)) , function(sim_id){
+  p = ggplot(stat_per_nhood_agg[stat_per_nhood_agg$sim_id == sim_id , ] , aes(x = factor(ct_spec_thresh) , y = auc , col = type)) +
+    geom_boxplot(outlier.size = 0.5) + 
+    facet_wrap(~group_prob_plot+sample_id_plot , nrow = 4) +
+    theme_bw() +
+    scale_color_manual(values = cols_types) + 
+    ylim(c(0.47 , 1.03)) +
+    labs(x = "" , y = "") + 
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+  return(p)
+})
+p = ggarrange(plotlist = plots , ncol = length(sim_ids) , common.legend = T)
+p
+ggsave(filename = paste0(figures.dir, "auc_milo_vs_cacoa/nhood_view" , ".png"), plot = p, width = 14, height = 6)
+
+
+
+```
+
+### Single cell view
+
+```{r auc-cacoa-sc-view, message = FALSE}
+
+
+# aggregate cacoa
+stat_cacoa_per_cell_agg = as.data.frame(stat_cacoa_per_cell %>% group_by(group_prob , de_prob , de_fac , sim_id, Gene , correction , response_cells ,logFC_target , PValue_target , FDR_target , n_samples_reference , n_samples_query) %>% dplyr::summarise(auc = mean(auc , na.rm = T)))
+colnames(stat_cacoa_per_cell_agg)[colnames(stat_cacoa_per_cell_agg) == "correction"] = "type"
+stat_cacoa_per_cell_agg$type = paste0("Cacoa_" , stat_cacoa_per_cell_agg$type , "_" , stat_cacoa_per_cell_agg$response_cells)
+stat_cacoa_per_cell_agg$round = 1
+colnames(stat_cacoa_per_cell_agg)[colnames(stat_cacoa_per_cell_agg) == "n_samples_reference"] = "n_samples_ref"
+
+stat_milo_per_cell_agg = stat_milo_per_cell
+stat_milo_per_cell_agg$type = paste0("miloDE_" , stat_milo_per_cell_agg$k)
+
+stat_per_cell = rbind(stat_cacoa_per_cell_agg[,c("group_prob" , "de_prob" , "de_fac" , "sim_id" , "type", "round" , "Gene" , "logFC_target" , "n_samples_ref" , "n_samples_query" , "auc")] , 
+                       stat_milo_per_cell_agg[,c("group_prob" , "de_prob" , "de_fac" , "sim_id" , "type", "round" , "Gene" , "logFC_target" , "n_samples_ref" , "n_samples_query" , "auc")])
+
+
+stat_per_cell_agg = as.data.frame(stat_per_cell %>% group_by(group_prob , de_prob , de_fac , sim_id , type , Gene , logFC_target , n_samples_ref , n_samples_query) %>% dplyr::summarise(auc = mean(auc , na.rm = T)))
+stat_per_cell_agg$type = factor(stat_per_cell_agg$type , levels = c("miloDE_20" , "miloDE_25" , "miloDE_30" , "Cacoa_raw_all" , "Cacoa_raw_case", "Cacoa_adj_all" , "Cacoa_adj_case"))
+stat_per_cell_agg$sample_id_plot = paste0(stat_per_cell_agg$n_samples_ref , " control, " , stat_per_cell_agg$n_samples_query , " case")
+stat_per_cell_agg$group_prob_plot = sapply(stat_per_cell_agg$group_prob , function(x) paste0(x * 100 , "%"))
+
+
+
+cols_types = c( met.brewer("Egypt" , n = 4)[c(1,3,4)] , "gray75" , "cadetblue2" , "gray25" , "cadetblue4")
+stat_per_cell_agg$group_prob_plot = factor(stat_per_cell_agg$group_prob_plot , levels = c("0.5%" , "1%" , "2.5%" , "5%" , "10%" , "25%" , "50%"))
+p = ggplot(stat_per_cell_agg , aes(x = group_prob_plot , y = auc , col = type)) +
+  geom_boxplot(outlier.size = 0.5) + 
+  facet_wrap(~sample_id_plot , nrow = 4) +
+  theme_bw() +
+  scale_color_manual(values = cols_types) + 
+  #ylim(c(0.45 , 1)) +
+  labs(x = "" , y = "") + 
+  theme(axis.text.x = element_text(angle = , vjust = 1, hjust=1))
+p
+ggsave(filename = paste0(figures.dir, "auc_milo_vs_cacoa/cell_view" , ".png"), plot = p, width = 11, height = 6)
+
+
+
+```
+
+### Robustness - miloDE only
+
+#### AUC distribution
+
+```{r robustness-auc-check, message = FALSE}
+
+
+stat_milo_per_nhood = stat_milo_per_nhood[stat_milo_per_nhood$ct_spec_thresh %in% c(0.1 , 0.25) , ]
+stat_milo_per_nhood$sample_id_plot = paste0(stat_milo_per_nhood$n_samples_ref , " control, " , stat_milo_per_nhood$n_samples_query , " case")
+stat_milo_per_nhood$group_prob_plot = sapply(stat_milo_per_nhood$group_prob , function(x) paste0(x * 100 , "%"))
+
+
+get_plot = function(k , ct_spec_thresh){
+  current.stat = stat_milo_per_nhood[stat_milo_per_nhood$k == k & stat_milo_per_nhood$ct_spec_thresh == ct_spec_thresh, ]
+  current.stat = current.stat[order(current.stat$logFC_target) , ]
+  current.stat$logFC_target = round(current.stat$logFC_target , 1)
+  current.stat$logFC_target = factor(current.stat$logFC_target , levels = sort(unique(current.stat$logFC_target)))
+  current.stat$group_prob_plot = factor(current.stat$group_prob_plot , levels = c("0.5%" , "1%" , "2.5%" , "5%" , "10%" , "25%" , "50%"))
+  breaks = seq(1 , 5 , 0.1)
+  cols = wes_palette("Zissou1" , type = "continuous" , n = length(breaks))
+  names(cols) = breaks
+  p = ggplot(current.stat , aes(x = group_prob_plot , y = auc , col = logFC_target)) +
+    geom_boxplot(outlier.size = 0.5) + 
+    facet_wrap(~sample_id_plot , nrow = 4 , scales = "free_y") +
+    theme_bw() +
+    scale_color_manual(values = cols , breaks = seq(1,5,0.5) , name = "") +
+    #ylim(c(0.45 , 1)) +
+    labs(x = "" , y = "") + 
+    theme(axis.text.x = element_text(angle = , vjust = 1, hjust=1)) +
+    theme(legend.position = "none")
+  return(p)
+}
+
+
+anno_plot = expand.grid(k = c(20,25,30) , ct_spec_thresh = c(0.1 , 0.25))
+plots = lapply(1:nrow(anno_plot) , function(i){
+  p = get_plot(anno_plot$k[i] , anno_plot$ct_spec_thresh[i])
+  ggsave(filename = paste0(figures.dir, "robustnes_auc/", anno_plot$k[i] , "_" , anno_plot$ct_spec_thresh[i] , ".png"), plot = p, width = 7, height = 5)
+})
+
+
+# get legend
+current.stat = stat_milo_per_nhood[stat_milo_per_nhood$k == 20 & stat_milo_per_nhood$ct_spec_thresh == 0.1, ]
+current.stat = current.stat[order(current.stat$logFC_target) , ]
+current.stat$logFC_target = round(current.stat$logFC_target , 1)
+current.stat$logFC_target = factor(current.stat$logFC_target , levels = sort(unique(current.stat$logFC_target)))
+current.stat$group_prob_plot = factor(current.stat$group_prob_plot , levels = c("0.5%" , "1%" , "2.5%" , "5%" , "10%" , "25%" , "50%"))
+breaks = seq(1 , 5 , 0.1)
+cols = wes_palette("Zissou1" , type = "continuous" , n = length(breaks))
+names(cols) = breaks
+p = ggplot(current.stat , aes(x = group_prob_plot , y = auc , col = logFC_target)) +
+    geom_boxplot(outlier.size = 0.5) + 
+    facet_wrap(~sample_id_plot , nrow = 4 , scales = "free_y") +
+    theme_bw() +
+    scale_color_manual(values = cols , breaks = seq(1,5,0.5) , name = "") +
+    #ylim(c(0.45 , 1)) +
+    labs(x = "" , y = "") + 
+    theme(axis.text.x = element_text(angle = , vjust = 1, hjust=1)) +
+    theme(legend.position = "right")
+p
+ggsave(filename = paste0(figures.dir, "robustnes_auc/", "legend" , ".png"), plot = p, width = 7, height = 6)
+
+
+```
+
+#### How many nhoods are positive
+
+```{r nhoods-pos-robustness-check, message = FALSE}
+
+
+anno_assignment = expand.grid(k = c(20,25,30) , order = 2 , round = c(1,2,3,4,5))
+ct_spec_thresh.grid = c(0.1 , 0.25)
+
+stat_hoods_pos = lapply(1:nrow(anno_sim) , function(i){
+  stat_per_sim = lapply(1:nrow(samples_grid) , function(j){
+    milo_de = readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/milo_de/id_",  anno_sim$sim_id[i], "/" , "ref_" , samples_grid$n_samples_reference[j] , "_query_" , samples_grid$n_samples_query[j] , ".Rds"))
+    stat_per_milo = lapply(1:nrow(anno_assignment) , function(z){
+      current.milo_de = milo_de[[z]]
+      out = data.frame(ct_spec_thresh = c(0.1 , 0.25) , n_hoods_pos = c(sum(current.milo_de$frac_cells_Group1 > 0.1) , sum(current.milo_de$frac_cells_Group1 > 0.25)))
+      out = cbind(out , anno_assignment[z,])
+      return(out)
+    })
+    stat_per_milo = do.call(rbind , stat_per_milo)
+    stat_per_milo$n_samples_ref = samples_grid$n_samples_reference[j]
+    stat_per_milo$n_samples_query = samples_grid$n_samples_query[j]
+    return(stat_per_milo)
+  })
+  stat_per_sim = do.call(rbind , stat_per_sim)
+  stat_per_sim = cbind(stat_per_sim , anno_sim[i,])
+  return(stat_per_sim)
+})
+stat_hoods_pos = do.call(rbind , stat_hoods_pos)
+stat_hoods_pos$sample_id_plot = paste0(stat_hoods_pos$n_samples_ref , " control, " , stat_hoods_pos$n_samples_query , " case")
+stat_hoods_pos$group_prob_plot = sapply(stat_hoods_pos$group_prob , function(x) paste0(x * 100 , "%"))
+stat_hoods_pos$group_prob_plot = factor(stat_hoods_pos$group_prob_plot , levels = c("0.5%" , "1%" , "2.5%" , "5%" , "10%" , "25%" , "50%"))
+stat_hoods_pos$k = factor(stat_hoods_pos$k , levels = c(20,25,30))
+
+
+cols = met.brewer("Egypt" , n = 4)[c(1,3,4)]
+p = ggplot(stat_hoods_pos , aes(x = factor(ct_spec_thresh) , y = n_hoods_pos , col = factor(k))) +
+  geom_boxplot(outlier.size = 0.5) + 
+  facet_wrap(~sample_id_plot + group_prob_plot, nrow = 4 , scales = "free_y") +
+  theme_bw() +
+  scale_color_manual(values = cols , name = "k") +
+  #ylim(c(0.45 , 1)) +
+  labs(x = "" , y = "") + 
+  theme(axis.text.x = element_text(angle = , vjust = 1, hjust=1)) +
+  theme(legend.position = "right")
+p
+ggsave(filename = paste0(figures.dir, "robustnes_auc/", "n_hoods_pos" , ".png"), plot = p, width = 11, height = 6)
+
+
+```
+
+
+## miloDE vs bulk
+
+### Senseitvity and lfc heatmap
+
+#### Pseudo-bulk
+
+```{r bulk-sensitivity-pseudo-bulk, message = FALSE}
+
+get_de_genes_bulk = function(sce){ 
+  require(tibble) 
+  require(edgeR) 
+  summed = summarizeAssayByGroup(counts(sce), colData(sce)[,c("Batch","type")]) 
+  summed$type = factor(summed$type  , levels = c("reference" , "query"))
+  y <- DGEList(assay(summed, "sum"), samples=colData(summed), lib.size = colSums(assay(summed , "sum"))) 
+  # select genes 
+  #keep <- filterByExpr(y, group=summed$Batch , min.count = 1 , min.total.count = 1) 
+  #y <- y[keep,] 
+  y <- calcNormFactors(y) 
+  design <- model.matrix(~ factor(type), y$samples) 
+  y <- estimateDisp(y, design) 
+  fit <- glmQLFit(y, design, robust=TRUE) 
+  res <- glmQLFTest(fit, coef=ncol(design)) 
+  out = topTags(res, n = Inf ) 
+  out = as.data.frame(out) 
+  out = rownames_to_column(out , var = "Gene") 
+  return(out)
+}
+
+
+stat_bulk = lapply(1:nrow(anno_sim) , function(i){
+  sim_extended = readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/sims_main/perturbed/id_", anno_sim$sim_id[i], ".Rds"))
+  stat_per_sim = lapply(1:nrow(samples_grid) , function(j){
+    samples_2_throw = c()
+    if (samples_grid$n_samples_reference[j] == 2){
+      samples_2_throw = c(samples_2_throw , c("Batch5" , "Batch7" , "Batch9"))
+    }
+    if (samples_grid$n_samples_query[j] == 2){
+      samples_2_throw = c(samples_2_throw , c("Batch6" , "Batch8" , "Batch10"))
+    }
+    sim = sim_extended[, !sim_extended$Batch %in% samples_2_throw]
+    
+    # get de genes
+    rowdata = as.data.frame(rowData(sim))
+    genes = rowdata$Gene[rowdata$gene_perturbed == T]
+    
+    de_genes_target = get_de_genes_bulk(sim[,sim$Group == "Group1"])
+    de_genes_target = de_genes_target[ , c("Gene" , "logFC" , "PValue" , "FDR")]
+    colnames(de_genes_target) = c("Gene" , "logFC_target" , "PValue_target" , "FDR_target")
+    de_genes_all = get_de_genes_bulk(sim)
+    de_genes_all = de_genes_all[ , c("Gene" , "logFC" , "PValue" , "FDR")]
+    colnames(de_genes_all) = c("Gene" , "logFC_all" , "PValue_all" , "FDR_all")
+    de_genes = merge(de_genes_target , de_genes_all , all.x = T , all.y = T)
+    de_genes = de_genes[de_genes$Gene %in% genes , ]
+    genes = select_genes(de_genes ,  seq(1 , 4 , 0.25))
+    de_genes = de_genes[de_genes$Gene %in% genes , ]
+    
+    de_genes = de_genes[, c("Gene" , "logFC_target" , "PValue_target" , "FDR_target" , "logFC_all" , "PValue_all" , "FDR_all")]
+    de_genes$logFC_target = round(de_genes$logFC_target , 5)
+    de_genes$logFC_target_bin = sapply(1:nrow(de_genes) , function(i){
+      x = abs(de_genes$logFC_target[i] - seq(1 , 4 , 0.25))
+      idx = which(x == min(x))
+      return(seq(1 , 4 , 0.25)[idx])
+    })
+    de_genes$logFC_all = round(de_genes$logFC_all , 2)
+    de_genes$n_samples_ref = samples_grid$n_samples_reference[j] 
+    de_genes$n_samples_query = samples_grid$n_samples_query[j] 
+    return(de_genes)
+  }) 
+  stat_per_sim = do.call(rbind , stat_per_sim)
+  stat_per_sim = cbind(stat_per_sim , anno_sim[i, ])
+  return(stat_per_sim)
+})
+stat_bulk = do.call(rbind , stat_bulk)
+stat_bulk$sample_id_plot = paste0(stat_bulk$n_samples_ref , " control, " , stat_bulk$n_samples_query , " case")
+stat_bulk$group_prob_plot = sapply(stat_bulk$group_prob , function(x) paste0(x * 100 , "%"))
+stat_bulk$group_prob_plot = factor(stat_bulk$group_prob_plot , levels = c("0.5%" , "1%" , "2.5%" , "5%" , "10%" , "25%" , "50%"))
+stat_bulk$DE_detected = stat_bulk$FDR_all < 0.1
+
+
+cols = wes_palette("Darjeeling1")[c(1,2)]
+p = ggplot(stat_bulk , aes(x = factor(logFC_target_bin) , y = group_prob_plot, fill = DE_detected)) +
+  geom_tile() +
+  facet_wrap(~sample_id_plot , nrow = 4) +
+  scale_fill_manual(values = cols , name = "") +
+  theme_bw() +
+  theme(legend.position = "top") +
+  labs(x = "" , y = "") + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+p
+ggsave(filename = paste0(figures.dir, "milo_vs_bulk/", "sens_bulk_fdr" , ".png"), plot = p, width = 3, height = 9)
+
+
+p = ggplot(stat_bulk , aes(x = factor(logFC_target_bin) , y = group_prob_plot, fill = logFC_all)) +
+  geom_tile() +
+  facet_wrap(~sample_id_plot , nrow = 4) +
+  theme_bw() +
+  scale_fill_viridis(discrete = F , name = "") +
+  theme(legend.position = "top") +
+  labs(x = "" , y = "") + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+p
+ggsave(filename = paste0(figures.dir, "milo_vs_bulk/", "sens_bulk_lfc" , ".png"), plot = p, width = 3, height = 9)
+
+
+
+```
+
+#### miloDE 
+
+```{r bulk-sensitivity-milo-de, message = FALSE}
+
+
+get_detection_stat = function(category , response_p , response_lfc , response.thresh = 0.1 , lfc.thresh = 0){
+  require(pROC)
+  #roc = suppressMessages(roc(category , response))
+  #auc = as.numeric(roc$auc)
+  response = response_p <= response.thresh & abs(response_lfc) > lfc.thresh
+  fp = sum(category == 0 & response == 1)
+  fn = sum(category == 1 & response == 0)
+  tp = sum(category == 1 & response == 1)
+  tn = sum(category == 0 & response == 0)
+  sensitivity = tp/(tp + fn)
+  specificity = tn/(tn + fp)
+  fdr = fp/(fp + tp)
+  fomr = fn/(fn + tn)
+  out = data.frame(sensitivity = sensitivity , specificity = specificity , fdr = fdr , fomr = fomr)
+  return(out)
+}
+
+
+anno_assignment = expand.grid(k = c(20,25,30) , order = 2 , round = c(1,2,3,4,5))
+
+stat_milo = lapply(1:nrow(anno_sim) , function(i){
+  print(i)
+  sim_extended = readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/sims_main/perturbed/id_", anno_sim$sim_id[i], ".Rds"))
+  stat_per_sim = lapply(1:nrow(samples_grid) , function(j){
+    print(j)
+    samples_2_throw = c()
+    if (samples_grid$n_samples_reference[j] == 2){
+      samples_2_throw = c(samples_2_throw , c("Batch5" , "Batch7" , "Batch9"))
+    }
+    if (samples_grid$n_samples_query[j] == 2){
+      samples_2_throw = c(samples_2_throw , c("Batch6" , "Batch8" , "Batch10"))
+    }
+    sim = sim_extended[, !sim_extended$Batch %in% samples_2_throw]
+    
+    current.stat_bulk = stat_bulk[stat_bulk$sim_id == anno_sim$sim_id[i] & stat_bulk$n_samples_ref == samples_grid$n_samples_reference[j] & stat_bulk$n_samples_query ==  samples_grid$n_samples_query[j] , ]
+    
+    milo_de = readRDS(paste0(root.dir , "data/processed/benchmark/discrete/no_batch/milo_de/id_",  anno_sim$sim_id[i], "/" , "ref_" , samples_grid$n_samples_reference[j] , "_query_" , samples_grid$n_samples_query[j] , ".Rds"))
+    stat_per_milo = lapply(1:length(milo_de) , function(z){
+      current.milo_de = milo_de[[z]]
+      idx = which(is.na(assay(current.milo_de , "pval_corrected_across_nhoods")))
+      assay(current.milo_de , "pval_corrected_across_nhoods")[idx] = 1
+      stat_per_gene = lapply(current.stat_bulk$Gene , function(gene){
+        stat_per_ct_thresh = lapply(c(0.1 , 0.25) , function(ct_thresh){
+          response_p = assay(current.milo_de , "pval_corrected_across_nhoods")[gene , ] 
+          response_lfc = assay(current.milo_de , "logFC")[gene , ] 
+          category = current.milo_de$frac_cells_Group1 > ct_thresh
+          out = get_detection_stat(category , response_p , response_lfc)
+          current.idx = which(assay(current.milo_de , "pval_corrected_across_nhoods")[gene , ] < 0.1)
+          out = data.frame(sensitivity  = out[, "sensitivity"] , lfc_milo = mean(assay(current.milo_de , "logFC")[gene , current.idx]), ct_thresh = ct_thresh , Gene = gene)
+          return(out)
+        })
+        stat_per_ct_thresh = do.call(rbind , stat_per_ct_thresh)
+        return(stat_per_ct_thresh)
+      })
+      stat_per_gene = do.call(rbind , stat_per_gene)
+      stat_per_gene = merge(stat_per_gene , current.stat_bulk)
+      stat_per_gene = cbind(stat_per_gene , anno_assignment[z,])
+      return(stat_per_gene)
+    })
+    stat_per_milo = do.call(rbind , stat_per_milo)
+    #stat_per_milo$n_samples_ref = samples_grid$n_samples_reference[j]
+    #stat_per_milo$n_samples_query = samples_grid$n_samples_query[j]
+    return(stat_per_milo)
+  }) 
+  stat_per_sim = do.call(rbind , stat_per_sim)
+  #stat_per_sim = cbind(stat_per_sim , anno_sim[i, ])
+  return(stat_per_sim)
+})
+stat_milo = do.call(rbind , stat_milo)
+stat_milo_agg = as.data.frame(stat_milo %>% group_by(Gene , ct_thresh , logFC_target_bin , logFC_target ,sample_id_plot , group_prob_plot , k) %>% dplyr::summarise(sensitivity = mean(sensitivity , na.rm = T) , lfc_milo = mean(lfc_milo , na.rm = T)))
+stat_milo_agg$logFC_target_bin = factor(stat_milo_agg$logFC_target_bin , levels = sort(unique(stat_milo_agg$logFC_target_bin)))
+
+
+
+meta = unique(stat_milo_agg[,c("ct_thresh" , "k")])
+plots = lapply(1:nrow(meta) , function(i){
+  p = ggplot(stat_milo_agg[stat_milo_agg$k == meta$k[i] & stat_milo_agg$ct_thresh == meta$ct_thresh[i] , ] , aes(x = logFC_target_bin , y = group_prob_plot , fill = sensitivity)) +
+    geom_tile() +
+    facet_wrap(~sample_id_plot, nrow = 4) +
+    theme_bw() +
+    scale_fill_viridis(discrete = F , name = "" , option = "inferno") +
+    theme(legend.position = "top") +
+    labs(x = "" , y = "") + 
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+  return(p)
+})
+p = ggarrange(plotlist = plots , ncol = 6 , common.legend = T)
+p
+ggsave(filename = paste0(figures.dir, "milo_vs_bulk/", "sens_milo_sens" , ".png"), plot = p, width = 19, height = 9)
+
+
+
+plots = lapply(1:nrow(meta) , function(i){
+  p = ggplot(stat_milo_agg[stat_milo_agg$k == meta$k[i] & stat_milo_agg$ct_thresh == meta$ct_thresh[i] , ] , aes(x = logFC_target_bin , y = group_prob_plot , fill = lfc_milo)) +
+    geom_tile() +
+    facet_wrap(~sample_id_plot, nrow = 4) +
+    theme_bw() +
+    scale_fill_viridis(discrete = F , name = "") +
+    theme(legend.position = "top") +
+    labs(x = "" , y = "") + 
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+  return(p)
+})
+p = ggarrange(plotlist = plots , ncol = 6 , common.legend = T)
+p
+ggsave(filename = paste0(figures.dir, "milo_vs_bulk/", "sens_milo_lfc" , ".png"), plot = p, width = 19, height = 9)
+
+
+
+
+
+```
+
+
+# Session Info
+
+```{r sessinf}
+sessionInfo()
+```
