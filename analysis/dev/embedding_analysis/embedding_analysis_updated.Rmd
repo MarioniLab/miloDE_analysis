@@ -42,7 +42,6 @@ genes_all = read.csv(paste0(root.dir , "data/sces/mouse_embryo/chimera_WT/HVGs/a
 genes = list(all = genes_all$HVG , wt = genes_wt$HVG)
 
 
-chimera_speicific_genes = c("Rpgrip1" , "Slc24a5" , "Cbx3" , "Actb")
 chimera_speicific_genes = c("Rpgrip1" , "Cbx3" , "Actb")
 chimera_speicific_stat = data.frame(SYMBOL = chimera_speicific_genes)
 chimera_speicific_stat = merge(chimera_speicific_stat , rowdata , all.x = T , all.y = F)
@@ -63,8 +62,8 @@ sce_milo_nhoods = readRDS(paste0(root.dir , "data/processed/embedding_analysis_u
 stat = readRDS(paste0(root.dir , "data/temp/embedding_homogeneity_stat.Rds"))
 
 
-
 ```
+
 
 # UMAPs, colored by CT
 
@@ -165,9 +164,7 @@ de_stat_bulk$n_norm = de_stat_bulk$n
 de_stat_bulk$n_norm[de_stat_bulk$PValue >= 0.01] = 0
    
 
-
-
-de_stat_per_gene = as.data.frame(de_stat_bulk %>% group_by(ENSEMBL , SYMBOL) %>% dplyr::summarise(median_pval = median(PValue , na.rm = T) , median_logFC = median(logFC , na.rm = T) , mean_logFC = mean(logFC , na.rm = T) , frac_cts_sig = mean(FDR < 0.05 , na.rm = T) , 
+de_stat_per_gene = as.data.frame(de_stat_bulk %>% group_by(ENSEMBL , SYMBOL) %>% dplyr::summarise(median_pval = median(PValue , na.rm = T) , median_logFC = median(logFC , na.rm = T) , mean_logFC = mean(logFC , na.rm = T) , frac_cts_sig = mean(FDR < 0.1 , na.rm = T) , 
                                                                                                   weight_cts_sig = sum(n_norm)))
 de_stat_per_gene = de_stat_per_gene[de_stat_per_gene$SYMBOL %in% as.character(chimera_speicific_stat$SYMBOL) , ]
 
@@ -398,7 +395,6 @@ ggsave(filename = paste0(figures.dir, "sd_distr_combined", ".png"), plot = p, wi
 ```{r boxplot-distr-milo-de, message = FALSE}
 
 
-
 de_stat = readRDS( paste0(root.dir , "data/processed/embedding_analysis_updated/milo_de_chimera_genes.Rds") )
 rowdata = as.data.frame(rowData(sce))
 colnames(de_stat)[colnames(de_stat) == "gene"] = "ENSEMBL"
@@ -492,13 +488,14 @@ sig_stat = sig_stat[!sig_stat$method == "Azimuth" , ]
 ```{r boxplot-distr-milo-de, message = FALSE}
 
 
+de_stat$pval_corrected_across_nhoods[is.na(de_stat$pval_corrected_across_nhoods)] = 1
 current.de_stat = de_stat[de_stat$round == 1 , ]
 
-current.de_stat = as.data.frame(current.de_stat %>% group_by(SYMBOL , id , reduced_dim_method , reduced_dim_type , reduced_dim_genes , reduced_dim_type_genes , reduced_dim , round) %>% dplyr::summarise(frac_hoods_sig_01 = mean(pval < 0.1 , na.rm = T) , frac_hoods_sig_005 = mean(pval < 0.05 , na.rm = T) , frac_hoods_sig_001 = mean(pval < 0.01 , na.rm = T) , frac_hoods_sig_0001 = mean(pval < 0.005 , na.rm = T)  , frac_hoods_sig_0005 = mean(pval < 0.001 , na.rm = T) , frac_hoods_sig_00001 = mean(pval < 0.0001 , na.rm = T) ))
+current.de_stat = as.data.frame(current.de_stat %>% group_by(SYMBOL , id , reduced_dim_method , reduced_dim_type , reduced_dim_genes , reduced_dim_type_genes , reduced_dim , round) %>% dplyr::summarise(frac_hoods_sig_01 = mean(pval_corrected_across_nhoods < 0.1 , na.rm = T) , frac_hoods_sig_005 = mean(pval_corrected_across_nhoods < 0.05 , na.rm = T) , frac_hoods_sig_001 = mean(pval_corrected_across_nhoods < 0.01 , na.rm = T) , frac_hoods_sig_0001 = mean(pval_corrected_across_nhoods < 0.005 , na.rm = T)  , frac_hoods_sig_0005 = mean(pval_corrected_across_nhoods < 0.001 , na.rm = T) , frac_hoods_sig_00001 = mean(pval_corrected_across_nhoods < 0.0001 , na.rm = T) ))
 
 
 plots = lapply(levels(chimera_speicific_stat$SYMBOL) , function(gene){
-  p = ggplot(current.de_stat[current.de_stat$SYMBOL == gene , ] , aes(x = reduced_dim_method , y = frac_hoods_sig_001 , fill = reduced_dim_type_genes)) + 
+  p = ggplot(current.de_stat[current.de_stat$SYMBOL == gene , ] , aes(x = reduced_dim_method , y = frac_hoods_sig_01 , fill = reduced_dim_type_genes)) + 
     geom_bar(stat = "identity" , position = "dodge") + 
     theme_bw() +
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
@@ -513,6 +510,7 @@ ggsave(filename = paste0(figures.dir, "frac_sig_distr", ".png"), plot = p, width
 
 
 ```
+
 
 
 ## Combined
@@ -551,18 +549,18 @@ ggsave(filename = paste0(figures.dir, "logFC_distr_combined", ".png"), plot = p,
 ```{r boxplot-distr-milo-de, message = FALSE}
 
 
-current.de_stat = as.data.frame(de_stat %>% group_by(SYMBOL , id , reduced_dim_method , reduced_dim_type , reduced_dim_genes , reduced_dim_type_genes , reduced_dim , round) %>% dplyr::summarise(frac_hoods_sig_01 = mean(pval < 0.1 , na.rm = T) , frac_hoods_sig_005 = mean(pval < 0.05 , na.rm = T) , frac_hoods_sig_001 = mean(pval < 0.01 , na.rm = T) , frac_hoods_sig_0001 = mean(pval < 0.005 , na.rm = T)  , frac_hoods_sig_0005 = mean(pval < 0.001 , na.rm = T) , frac_hoods_sig_00001 = mean(pval < 0.0001 , na.rm = T) ))
+current.de_stat = as.data.frame(de_stat %>% group_by(SYMBOL , id , reduced_dim_method , reduced_dim_type , reduced_dim_genes , reduced_dim_type_genes , reduced_dim , round) %>% dplyr::summarise(frac_hoods_sig_01 = mean(pval_corrected_across_nhoods < 0.1 , na.rm = T) , frac_hoods_sig_005 = mean(pval_corrected_across_nhoods < 0.05 , na.rm = T) , frac_hoods_sig_001 = mean(pval_corrected_across_nhoods < 0.01 , na.rm = T) , frac_hoods_sig_0001 = mean(pval_corrected_across_nhoods < 0.005 , na.rm = T)  , frac_hoods_sig_0005 = mean(pval_corrected_across_nhoods < 0.001 , na.rm = T) , frac_hoods_sig_00001 = mean(pval_corrected_across_nhoods < 0.0001 , na.rm = T) ))
 
 
 plots = lapply(levels(chimera_speicific_stat$SYMBOL) , function(gene){
-  p = ggplot(current.de_stat[current.de_stat$SYMBOL == gene , ] , aes(x = reduced_dim_method , y = frac_hoods_sig_001 , fill = reduced_dim_type_genes)) + 
+  p = ggplot(current.de_stat[current.de_stat$SYMBOL == gene , ] , aes(x = reduced_dim_method , y = frac_hoods_sig_01 , fill = reduced_dim_type_genes)) + 
     geom_boxplot(outlier.size = .25 , fatten = 1 , lwd = .2) + 
     theme_bw() +
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
     labs(x = "" , y = "")  +
     scale_fill_manual(values = cols, name = "Embedding") +
     theme(legend.position = "none") + ggtitle(gene) +
-    ylim(c(0.7,1))
+    ylim(c(0.89,1))
   return(p)
 })
 p = ggarrange(plotlist = plots , common.legend = F , ncol = length(levels(chimera_speicific_stat$SYMBOL)) , nrow = 1)
@@ -572,6 +570,7 @@ ggsave(filename = paste0(figures.dir, "frac_sig_distr_combined", ".png"), plot =
 
 
 ```
+
 
 
 # Session Info
