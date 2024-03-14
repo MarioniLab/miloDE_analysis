@@ -57,10 +57,11 @@ anno_2 = data.frame(order = 2 , k = seq(5 , 50 , 5))
 anno = rbind(anno_1 , anno_2)
 
 
-stat = bplapply(1:nrow(anno) , function(i){
+stat = lapply(1:nrow(anno) , function(i){
+  print(i)
   out = get_stat(sce , k = anno$k[i] , order = anno$order[i])
   return(out)
-} , BPPARAM = mcparam)
+})
 stat = do.call(rbind , stat)
 
 # plot
@@ -70,7 +71,8 @@ p = ggplot(stat , aes(x = factor(k) , y = hood_size , fill = factor(order))) +
   scale_fill_manual(values = cols_order , name = "Order") +
   theme(axis.text.x = element_text(angle = 90)) + 
   facet_wrap(~order , scales = "free_x" , ncol = 2) +
-  labs(x = "k" , y = "Neighbourhood size")
+  labs(x = "k" , y = "Neighbourhood size") +
+  geom_hline(yintercept = 350 , "linetype" = "dashed") 
 p
 ggsave(filename = paste0(figures.dir , "k_2_hood_size.png"), plot = p, width = 7, height = 4)
 
