@@ -43,7 +43,7 @@ root.dir = "/nfs/research/marioni/alsu/hubmap_metaRef/"
 
 simulated_genes = readRDS(file = paste0(root.dir , "data/processed/simulations/simulated_genes.Rds"))
 
-anno = expand.grid(order = 2, k = seq(20,30,5), prop = c(0.1), round = c(4:5))
+anno = expand.grid(order = 2, k = seq(20,30,5), prop = c(0.1), round = c(1:5))
 
 
 

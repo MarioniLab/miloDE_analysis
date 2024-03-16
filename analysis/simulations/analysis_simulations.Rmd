@@ -20,8 +20,10 @@ library(viridis)
 library(MetBrewer)
 library(BiocParallel)
 library(tibble)
+library(cacoa)
+library(ROCR)
 
-ncores = 5
+ncores = 2
 mcparam = MulticoreParam(workers = ncores)
 register(mcparam)
 
@@ -55,6 +57,8 @@ sce = sce[, order(colnames(sce))]
 reducedDim(sce_original , "UMAP_scVI") = reducedDim(sce , "UMAP_scVI")
 
 sub_ct = "Floor plate"
+
+frac_cells_perturbed = mean(sce$sub_celltype == "Floor plate")
 
 
 ```
@@ -147,7 +151,11 @@ get_ct_stat_single_milo = function(sce_milo , sub_celltype = "Floor plate"){
   
   # add average hood size
   stat$avg_hood_size = round( mean(colSums(nhoods_sce)) )
+  # add estimated number of perturbed hoods
+  stat$n_estimated_hoods_perturbed = ceiling( ncol(nhoods_sce) * frac_cells_perturbed )
   
+  current.stat = stat[order(stat$ct_specificity , decreasing = T) , ]
+  stat$estimated_thresh = current.stat$ct_specificity[ceiling( ncol(nhoods_sce) * frac_cells_perturbed )]
   return(stat)
 }
 
@@ -220,8 +228,7 @@ get_detection_stat = function(category , response , response.thresh = 0.1){
 }
 
 # selected genes with wide range of logFC
-genes = simulated_genes$ENSEMBL[simulated_genes$SYMBOL %in% c("Vipas39" , "Pomt1" , "Dnajc10" , "Med27" , "Rngtt" , 
-                                                              "Fbln2" , "Abcf3" , "Zfp110" , "Hdhd5" , "Gabpa")]
+genes = simulated_genes$ENSEMBL[simulated_genes$SYMBOL %in% c("Med27" , "Fbln2" , "Abcf3"  , "Hdhd5" , "Gabpa")]
 
 anno_extended = expand.grid(k = c(20,25,30), round = c(1:5) , ct_specificity.thresh = c(0, 0.1 , 0.25) , ENSEMBL = genes)
 
@@ -257,27 +264,24 @@ stat$ct_specificity.thresh = paste0("CT purity\nthreshold = ", stat$ct_specifici
 ```{r plot, message = FALSE}
 
 
-# focus on 5 genes instead of 10 to not overwhelm plotting
-stat_reduced = stat[stat$logFC_floorplate %in% c(1.17 , 2.04 , 2.76 , 3.6 , 4.19) , ]
-
-p1 = ggplot(stat_reduced , aes(x = factor(logFC_floorplate) , y = sensitivity , color = factor(k))) +
+p1 = ggplot(stat , aes(x = factor(logFC_floorplate) , y = sensitivity , fill = factor(k))) +
   geom_boxplot() + 
   theme_bw() + 
-  facet_wrap(~ct_specificity.thresh , ncol = 4 ) + 
-  scale_color_manual(values = cols, name = "k") + 
+  facet_wrap(~ct_specificity.thresh , ncol = 3 ) + 
+  scale_fill_manual(values = cols, name = "k") + 
   ylim(c(0,1)) + 
-  labs(x = "Estimated logFC" , y = "Sensitivity") +
+  labs(x = "" , y = "") +
   theme(axis.text=element_text(size=17)) +
   theme(legend.text=element_text(size=17) , legend.title = element_text(size=17) ) + 
   theme(text=element_text(size=17) , axis.text.x = element_text(size=13) , axis.text.y = element_text(size=13))  + 
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
-p2 = ggplot(stat_reduced , aes(x = factor(logFC_floorplate) , y = fdr , color = factor(k))) +
+p2 = ggplot(stat , aes(x = factor(logFC_floorplate) , y = fdr , fill = factor(k))) +
   geom_boxplot() + 
   theme_bw() + 
-  facet_wrap(~ct_specificity.thresh , ncol = 4 ) + 
-  scale_color_manual(values = cols, name = "k") + 
+  facet_wrap(~ct_specificity.thresh , ncol = 3 ) + 
+  scale_fill_manual(values = cols, name = "k") + 
   ylim(c(0,1)) + 
-  labs(x = "Estimated logFC" , y = "FDR") +
+  labs(x = "" , y = "") +
   theme(axis.text=element_text(size=17)) +
   theme(legend.text=element_text(size=17) , legend.title = element_text(size=17) ) + 
   theme(text=element_text(size=17) , axis.text.x = element_text(size=13) , axis.text.y = element_text(size=13))  + 
@@ -290,50 +294,9 @@ ggsave(filename = paste0(figures.dir, "performance__all", ".png"), plot = p, wid
 
 ```
 
-## Extended version
-
-```{r plot, message = FALSE}
-
-
-# focus on 5 genes instead of 10 to not overwhelm plotting
-stat_reduced = stat
-stat_reduced$de_bulk_bool = stat_reduced$PValue_brain < 0.05
-
-cols_fill = c("gray30" , "white")
-
-cols = met.brewer("Egypt" , n = 4)[c(1,3,4)]  
-
-p1 = ggplot(stat_reduced , aes(x = factor(logFC_floorplate) , y = sensitivity , fill = de_bulk_bool , color = factor(k))) +
-  geom_boxplot() + 
-  theme_bw() + 
-  facet_wrap(~ct_specificity.thresh , ncol = 4 ) + 
-  scale_color_manual(values = cols, name = "k") + 
-  scale_fill_manual(values = cols_fill) + 
-  ylim(c(0,1)) + 
-  labs(x = "Estimated logFC" , y = "Sensitivity") +
-  theme(axis.text=element_text(size=17)) +
-  theme(legend.text=element_text(size=17) , legend.title = element_text(size=17) ) + 
-  theme(text=element_text(size=17) , axis.text.x = element_text(size=13) , axis.text.y = element_text(size=13))  + 
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
-p2 = ggplot(stat_reduced , aes(x = factor(logFC_floorplate) , y = fdr , fill = de_bulk_bool , color = factor(k))) +
-  geom_boxplot() + 
-  theme_bw() + 
-  facet_wrap(~ct_specificity.thresh , ncol = 4 ) + 
-  scale_color_manual(values = cols, name = "k") + 
-  scale_fill_manual(values = cols_fill) + 
-  ylim(c(0,1)) + 
-  labs(x = "Estimated logFC" , y = "FDR") +
-  theme(axis.text=element_text(size=17)) +
-  theme(legend.text=element_text(size=17) , legend.title = element_text(size=17) ) + 
-  theme(text=element_text(size=17) , axis.text.x = element_text(size=13) , axis.text.y = element_text(size=13))  + 
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
-p = ggarrange(p1,p2, nrow = 2 , common.legend = T , legend = "right") 
-p
-ggsave(filename = paste0(figures.dir, "performance__all__extended", ".png"), plot = p, width = 11, height = 5)
 
 
 
-```
 
 
 
